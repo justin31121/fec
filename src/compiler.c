@@ -26,6 +26,16 @@ bool compiler_from(const char *filepath, Parser_Alloc parser_alloc, void *userda
     da_append_many(&c->temp, c->buffer, c->buffer_size);		\
   }while(0)
 
+#define __compiler_error(c, str, ...) do{				\
+    u64 __compiler_error_temp_i = (c)->parser.tokenizer.i;					\
+    (c)->parser.tokenizer.i = (str).data - (c)->parser.tokenizer.data;	\
+    fprintf(stderr, "%s:%llu:%llu: ERROR: ", (c)->parser.filepath,	\
+	    tokenizer_row(&(c)->parser.tokenizer), tokenizer_column(&(c)->parser.tokenizer)); \
+    fprintf(stderr, __VA_ARGS__);					\
+    fprintf(stderr, "\n");						\
+    (c)->parser.tokenizer.i = __compiler_error_temp_i;			\
+  }while(0)
+
 void compiler_compile_expr_string(Compiler *c, string identifier, Expr *expr) {
   if(!c->temp.len) {
     __compiler_temp_appendf("    section .data\n");
@@ -33,11 +43,11 @@ void compiler_compile_expr_string(Compiler *c, string identifier, Expr *expr) {
 
   __compiler_temp_appendf(str_fmt":         db '"str_fmt"'\n", str_arg(identifier), str_arg(expr->as.content));
   __compiler_temp_appendf(str_fmt"_len:     equ $-"str_fmt"\n", str_arg(identifier), str_arg(identifier));
-  
-  __compiler_appendf("    mov rax, "str_fmt"_len\n", str_arg(identifier));
-  __compiler_appendf("    push rax, \n");
-  __compiler_appendf("    mov rax, "str_fmt"\n", str_arg(identifier));
-  __compiler_appendf("    push rax \n");
+
+  __compiler_appendf("    mov rdi, "str_fmt"_len\n", str_arg(identifier));
+  __compiler_appendf("    push rdi \n");
+  __compiler_appendf("    mov rdi, "str_fmt"\n", str_arg(identifier));
+  __compiler_appendf("    push rdi \n");
 }
 
 bool compiler_compile_expr_variable(Compiler *c, Expr *expr) {
@@ -48,20 +58,21 @@ bool compiler_compile_expr_variable(Compiler *c, Expr *expr) {
     if(string_eq(var->identifier, identifier)) {
 
       if(var->type != EXPR_TYPE_STRING) {
-	__compiler_appendf("    mov rax, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
-	__compiler_appendf("    push rax\n");
-      } else {	 
-	__compiler_appendf("    mov rax, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
-	__compiler_appendf("    push rax\n");
+	__compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
+	__compiler_appendf("    push rdi\n");
+      } else {
+	__compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
+	__compiler_appendf("    push rdi\n");
 
-	__compiler_appendf("    mov rax, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
-	__compiler_appendf("    push rax\n");
+	__compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
+	__compiler_appendf("    push rdi\n");
      }
 
       return true;
     }
   }
-  
+
+  __compiler_error(c, identifier, "Variable: '"str_fmt"' is undeclared", str_arg(identifier));
   return false;
 }
 
@@ -86,22 +97,38 @@ bool compiler_compile_expr(Compiler *c, Expr *expr) {
       return false;
     }
   } break;
+  case EXPR_TYPE_STRING: {
+    u8 buffer[1024];
+    u64 buffer_size = snprintf((s8 *) buffer, sizeof(buffer), "__fec_temp_string_%llu", c->temp_strings++);
+    assert(buffer_size < sizeof(buffer));
+    compiler_compile_expr_string(c, string_from(buffer, buffer_size), expr);
+  } break;
   default: {
     printf("Unimplemented expr in compiler_copmile_expr: %s\n", expr_type_name(expr->type));
     assert(!"unimplemented");
   } break;
   }
 
-  return true;  
+  return true;
 }
 
 bool compiler_compile_statement_decl(Compiler *c, Statement *statement) {
 
-  __compiler_appendf("\n    ;; "str_fmt" := \n", str_arg(statement->identifier));
+  __compiler_appendf("\n    ;; "str_fmt" := ...\n", str_arg(statement->identifier));
   
   Expr *expr = statement->as.expr;  
 
-  //TODO: check for existance
+  string identifier = statement->identifier;
+  for(u64 i=0;i<c->vars.len;i++) {
+    Compiler_Variable *var = &c->vars.items[i];
+    if(string_eq(var->identifier, identifier)) {
+
+      __compiler_error(c, identifier, "Variable: '"str_fmt"' is already decleared", str_arg(identifier));
+      
+      return false;
+    }
+  }
+  
   switch(expr->type) {
   case EXPR_TYPE_NUMBER:
   case EXPR_TYPE_VARIABLE: {
@@ -141,28 +168,34 @@ bool compiler_compile_statement_print(Compiler *c, Statement *statement) {
       Compiler_Variable *var = &c->vars.items[i];
       if(string_eq(var->identifier, identifier)) {
         if(var->type != EXPR_TYPE_STRING) {
+	  __compiler_error(c, expr->as.content, "Can not print %s", expr_type_name(var->type));
 	  return false;
 	}
       }
     }    
     
   } else if(expr->type != EXPR_TYPE_STRING) {
-    return false;
-  }
-
-  if(!compiler_compile_expr(c, expr)) {
+    __compiler_error(c, expr->as.content, "Can not print %s", expr_type_name(expr->type));
     return false;
   }
 
   __compiler_appendf("    mov rcx, -11\n");
   __compiler_appendf("    call GetStdHandle\n");
 
-  __compiler_appendf("    mov rcx, rax\n");
+  if(!compiler_compile_expr(c, expr)) {
+    return false;
+  }
   __compiler_appendf("    pop rdx\n");
   __compiler_appendf("    pop r8\n");
-  //__compiler_appendf("    mov r9, [rsp - 0]\n");
-  __compiler_appendf("    push qword 0\n");
+
+  __compiler_appendf("    sub rsp, 40\n");
+  
+  __compiler_appendf("    mov rcx, rax\n");
+  __compiler_appendf("    lea r9, [rsp]\n");
+  __compiler_appendf("    mov qword [rsp + 32], 0\n");
   __compiler_appendf("    call WriteFile\n");
+  __compiler_appendf("    add rsp, 40\n");
+
     
   return true;
 }
@@ -179,12 +212,14 @@ bool compiler_compile_statement_exit(Compiler *c, Statement *statement) {
       Compiler_Variable *var = &c->vars.items[i];
       if(string_eq(var->identifier, identifier)) {
         if(var->type != EXPR_TYPE_NUMBER) {
+	  __compiler_error(c, expr->as.content, "exit expects EXPR_NUMBER but got %s", expr_type_name(var->type));
 	  return false;
 	}
       }
     }    
     
   } else if(expr->type != EXPR_TYPE_NUMBER) {
+    __compiler_error(c, expr->as.content, "exit expects EXPR_NUMBER but got %s", expr_type_name(expr->type));
     return false;
   }
 
@@ -227,12 +262,12 @@ bool compiler_compile_statement(Compiler *c, Statement *statement) {
 
 bool compiler_compile(Compiler *c, string_builder *sb) {
 
-  u64 statements = 0;
   c->temp = (string_builder) {0};
   c->sb = sb;
   c->vars = (Compiler_Variables) {0};
   c->has_exit = false;
   c->stack_pos = 0;
+  c->temp_strings = 0;
 
   __compiler_appendf("    global _main\n");
   __compiler_appendf("    extern ExitProcess\n");
@@ -241,17 +276,21 @@ bool compiler_compile(Compiler *c, string_builder *sb) {
   
   __compiler_appendf("    section .text\n");
   __compiler_appendf("_main:\n");
-  __compiler_appendf("    sub rsp, 8\n");
+  __compiler_appendf("    sub rsp, 8+8\n");
 
-  Statement *statement;
-  while(parser_parse_statement(&c->parser, &statement)) {
-    if(!compiler_compile_statement(c, statement)) {
+  Statements statements = {0};
+  if(!parser_parse_block(&c->parser, &statements)) {
+    return false;
+  }
+  
+  for(u64 i=0;i<statements.len;i++) {
+    if(!compiler_compile_statement(c, statements.items[i])) {
       return false;
     }    
-    statements++;
   }
 
   if(!c->has_exit) {
+    __compiler_appendf("\n    ;; exit\n");
     __compiler_appendf("    mov rcx, 0\n");
     __compiler_appendf("    call ExitProcess\n");
   }
@@ -262,6 +301,6 @@ bool compiler_compile(Compiler *c, string_builder *sb) {
   }
 
   da_append(sb, '\0');
-  
-  return statements > 0;
+
+  return true;
 }

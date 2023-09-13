@@ -1,5 +1,7 @@
 message := "Hello, World!";
 
+exitCode := 69;
+
 print(message);
 
-exit(2);
+exit(exitCode);

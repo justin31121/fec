@@ -25,4 +25,6 @@ bool parser_parse_statement_decl(Parser *p, Statement **statement);
 bool parser_parse_statement_exit(Parser *p, Statement **statement);
 bool parser_parse_statement(Parser *p, Statement **statement);
 
+bool parser_parse_block(Parser *p, Statements *statement);
+
 #endif // PARSER_H

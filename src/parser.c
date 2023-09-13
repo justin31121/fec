@@ -51,6 +51,7 @@ bool parser_parse_statement_exit(Parser *p, Statement **statement) {
 
   Expr *expr;
   if(!parser_parse_expr(p, &expr)) {
+    __parser_error(p, "Expected EXPR but found %s", token_type_name(token.type));
     p->tokenizer.i = i;
     return false;
   }
@@ -79,6 +80,7 @@ bool parser_parse_statement_print(Parser *p, Statement **statement)  {
 
   Expr *expr;
   if(!parser_parse_expr(p, &expr)) {
+    __parser_error(p, "Expected EXPR but found %s", token_type_name(token.type));
     p->tokenizer.i = i;
     return false;
   }
@@ -110,6 +112,7 @@ bool parser_parse_statement_decl(Parser *p, Statement **statement)  {
 
   Expr *expr;
   if(!parser_parse_expr(p, &expr)) {
+    __parser_error(p, "Expected EXPR but found %s", token_type_name(token.type));
     p->tokenizer.i = i;
     return false;
   }
@@ -183,7 +186,6 @@ bool parser_parse_expr(Parser *p, Expr **expr) {
   } else if(parser_parse_expr_string(p, expr)) {
     return true;
   } else {
-    __parser_error(p, "Expected EXPR");
     return false;
   }
 }
@@ -200,4 +202,20 @@ bool parser_parse_statement(Parser *p, Statement **statement) {
     return false;
   }  
 
+}
+
+bool parser_parse_block(Parser *p, Statements *statements) {
+  while(p->tokenizer.i != p->tokenizer.len) {
+    Statement *s = NULL;
+    da_append(statements, s);
+    
+    if(!parser_parse_statement(p, &statements->items[statements->len - 1])) {
+      /* Token token; */
+      /* assert(tokenizer_next(&p->tokenizer, &token)); */
+      /* __parser_error(p, "Expected statement but got: "token_fmt, token_arg(token)); */
+      return false;
+    }
+  }
+
+  return true;
 }

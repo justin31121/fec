@@ -20,4 +20,10 @@ typedef struct{
   }as;
 }Statement;
 
+typedef struct{
+  Statement **items;
+  u64 len;
+  u64 cap;
+}Statements;
+
 #endif // STATEMENT_H

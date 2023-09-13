@@ -27,7 +27,10 @@ typedef struct{
 
   u64 stack_pos;
   Compiler_Variables vars;
+
+  
   string_builder temp;
+  u64 temp_strings;
 }Compiler;
 
 bool compiler_from(const char *filepath, Parser_Alloc parser_alloc, void *userdata, Compiler *c);

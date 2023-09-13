@@ -77,11 +77,16 @@ s32 main(s32 argc, s8 **argv) {
   ////////////////////////////////////////////////////////////////
 
   // Link
-  
+
+#ifdef _MSC_VER
+  cmd_append(&cmd, "link", "/ENTRY:_main", "/SUBSYSTEM:console", "/OUT:main.exe", "main.obj", "kernel32.lib");
+#else
   cmd_append(&cmd, "ld", "-LC:\\Windows\\System32", "-o", "main.exe", "main.obj", "-lkernel32");
+#endif // _MSC_VER
+
   if(!cmd_execute(&cmd, &code, &sb)) {
-    fprintf(stderr, "ERROR: Can not execute 'ld'. Make sure its on your PATH\n");
-    return 1;
+    fprintf(stderr, "ERROR: Can not link. Make sure it to have either 'ld' or 'link'installed and in your PATH\n");
+    return 1;    
   }
 
   if(code != 0) {

@@ -44,7 +44,6 @@ bool cmd_execute(Cmd *cmd, u8 *exit_code, string_builder *sb) {
   fprintf(stderr, "[CMD] %s\n", cstr); fflush(stderr);
   
   if(!CreateProcess(NULL, cstr, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))  {
-    printf("CREATE PROCESS FAILED\n"); fflush(stdout);
     return_defer(false);
   }
 
@@ -73,7 +72,9 @@ char *cmd_to_cstr(Cmd *cmd, string_builder *sb) {
       da_append_many(sb, p, strlen(p));
     }
     
-    da_append(sb, ' ');
+    if(i != cmd->len-1) {
+      da_append(sb, ' '); 
+    }
   }  
   da_append(sb, '\0');
 

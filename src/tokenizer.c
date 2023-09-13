@@ -4,19 +4,22 @@
 #include <ctype.h>
 
 Tokenizer tokenizer_from(string src) {
-  return (Tokenizer) {src.data, src.len, 0, 0};
+  u64 len = src.len;
+  while(len - 1 > 0 && isspace(src.data[len - 1])) len--;
+  
+  return (Tokenizer) {src.data, len, 0, 0};
 }
 
 #define __tokenizer_tokenize_singleton(ttype)\
   token->type = (ttype);\
-  token->content = string_from(&c, 1);\
+  token->content = string_from(t->data + t->i, 1);\
   t->i++;\
   return true
 
 bool tokenizer_peek(Tokenizer *t, u64 n, Token *token) {
   u64 i = t->i;
   
-  for(u64 i=0;i<n;i++) {
+  for(u64 j=0;j<n;j++) {
     if(!tokenizer_next(t, token)) {
       return false;
     }
@@ -25,6 +28,40 @@ bool tokenizer_peek(Tokenizer *t, u64 n, Token *token) {
   t->i = i;
   return true;
 }
+
+bool tokenizer_tokenize_keyword(Tokenizer *t, Token_Type type, const char * cstr, Token *token) {
+  u64 cstr_len = strlen(cstr);
+  if(t->i + cstr_len >= t->len) {
+    return false;
+  }
+
+  if(memcmp(t->data + t->i, cstr, cstr_len) != 0) {
+    return false;
+  }
+
+  token->type = type;
+  token->content = string_from(t->data + t->i, cstr_len);
+
+  t->i += cstr_len;
+
+  return true;
+}
+
+bool tokenizer_match_keyword(Token_Type type, const char *cstr, Token *token) {
+  u64 cstr_len = strlen(cstr);
+  if(token->content.len != cstr_len) {
+    return false;
+  }
+
+  if(memcmp(token->content.data, cstr, cstr_len) != 0) {
+    return false;
+  }
+
+  token->type = type;
+
+  return true;
+}
+
 
 bool tokenizer_next(Tokenizer *t, Token *token) {
   while(t->i < t->len && isspace(t->data[t->i]) ) {
@@ -37,11 +74,7 @@ bool tokenizer_next(Tokenizer *t, Token *token) {
 
   t->last = t->i;
 
-  if(tokenizer_tokenize_keyword(t, TOKEN_TYPE_EXIT, "exit", token)) {
-    return true;
-  } else if(tokenizer_tokenize_keyword(t, TOKEN_TYPE_ASSIGN, ":=", token)) {
-    return true;
-  } else if(tokenizer_tokenize_keyword(t, TOKEN_TYPE_PRINT, "print", token)) {
+  if(tokenizer_tokenize_keyword(t, TOKEN_TYPE_ASSIGN, ":=", token)) {
     return true;
   }
 
@@ -58,34 +91,25 @@ bool tokenizer_next(Tokenizer *t, Token *token) {
     return true;
   }
 
-  if(tokenizer_tokenize_name(t, token)) {
-    return true;
-  }
-
   if(tokenizer_tokenize_number(t, token)) {
     return true;
   }
+
+  if(tokenizer_tokenize_name(t, token)) {
+
+    if(tokenizer_match_keyword(TOKEN_TYPE_EXIT, "exit", token)) {
+      return true;
+    }
+
+    if(tokenizer_match_keyword(TOKEN_TYPE_PRINT, "print", token)) {
+      return true;
+    }    
+    
+    return true;
+  }
+
   
   return false;
-}
-
-bool tokenizer_tokenize_keyword(Tokenizer *t, Token_Type type, const char *cstr, Token *token) {
-  
-  u64 cstr_len = strlen(cstr);
-  if(t->i + cstr_len >= t->len) {
-    return false;
-  }
-
-  if(memcmp(t->data + t->i, cstr, cstr_len) != 0) {
-    return false;
-  }
-
-  token->type = type;
-  token->content = string_from(t->data + t->i, cstr_len);
-
-  t->i += cstr_len;
-    
-  return true;
 }
 
 bool tokenizer_tokenize_string(Tokenizer *t, Token *token) {
