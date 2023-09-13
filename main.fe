@@ -1,0 +1,5 @@
+message := "Hello, World!";
+
+print(message);
+
+exit(2);
