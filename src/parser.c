@@ -178,7 +178,7 @@ bool parser_parse_expr_number(Parser *p, Expr **expr) {
   return true;
 }
 
-bool parser_parse_expr(Parser *p, Expr **expr) {
+bool parser_parse_expr_single(Parser *p, Expr **expr) {
   if(parser_parse_expr_number(p, expr)) {
     return true;
   } else if(parser_parse_expr_variable(p, expr)) {
@@ -188,6 +188,41 @@ bool parser_parse_expr(Parser *p, Expr **expr) {
   } else {
     return false;
   }
+}
+
+bool parser_parse_expr(Parser *p, Expr **expr) {
+
+  Expr *value;
+  if(!parser_parse_expr_single(p, &value)) {
+    return false;
+  }
+
+  Token token;
+  if(!tokenizer_peek(&p->tokenizer, 1, &token)) {
+    *expr = value;
+    return true;
+  }
+  
+  if(!token_type_is_operator(token.type)) {
+    *expr = value;
+    return true;
+  }
+  // Consume peeked token
+  tokenizer_next(&p->tokenizer, &token);
+
+  Expr_Type expr_type = expr_type_from(token.type);
+
+  Expr *rhs;
+  if(!parser_parse_expr(p, &rhs)) {
+    return false;
+  }
+
+  *expr = p->alloc(p->userdata, sizeof(Expr));
+  (*expr)->type = expr_type;
+  (*expr)->as.binary.lhs = value;
+  (*expr)->as.binary.rhs = rhs;
+  
+  return true;
 }
 
 bool parser_parse_statement(Parser *p, Statement **statement) {

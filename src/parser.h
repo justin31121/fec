@@ -18,6 +18,7 @@ bool parser_from(const char *filepath, Parser_Alloc parser_alloc, void *userdata
 bool parser_parse_expr_string(Parser *p, Expr **expr);
 bool parser_parse_expr_variable(Parser *p, Expr **expr);
 bool parser_parse_expr_number(Parser *p, Expr **expr);
+bool parser_parse_expr_single(Parser *p, Expr **expr);
 bool parser_parse_expr(Parser *p, Expr **expr);
 
 bool parser_parse_statement_print(Parser *p, Statement **statement);

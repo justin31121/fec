@@ -1,6 +1,6 @@
-message := "Hello, World!";
+message := "Hello, Seaman!";
 
-exitCode := 69;
+exitCode := 0;
 
 print(message);
 

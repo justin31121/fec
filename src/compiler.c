@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+//https://wiki.cdot.senecacollege.ca/wiki/X86_64_Register_and_Instruction_Quick_Start
+
 bool compiler_from(const char *filepath, Parser_Alloc parser_alloc, void *userdata, Compiler *c) {
   if(!parser_from(filepath, parser_alloc, userdata, &c->parser)) {
     return false;
@@ -53,33 +55,51 @@ void compiler_compile_expr_string(Compiler *c, string identifier, Expr *expr) {
 bool compiler_compile_expr_variable(Compiler *c, Expr *expr) {
 
   string identifier = expr->as.content;
-  for(u64 i=0;i<c->vars.len;i++) {
-    Compiler_Variable *var = &c->vars.items[i];
-    if(string_eq(var->identifier, identifier)) {
 
-      if(var->type != EXPR_TYPE_STRING) {
-	__compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
-	__compiler_appendf("    push rdi\n");
-      } else {
-	__compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
-	__compiler_appendf("    push rdi\n");
-
-	__compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
-	__compiler_appendf("    push rdi\n");
-     }
-
-      return true;
-    }
+  Compiler_Variable *var;
+  if(!compiler_get_variable(c, identifier, &var)) {
+    __compiler_error(c, identifier, "Variable: '"str_fmt"' is undeclared", str_arg(identifier));
+    return false; 
   }
 
-  __compiler_error(c, identifier, "Variable: '"str_fmt"' is undeclared", str_arg(identifier));
-  return false;
+  if(var->type != EXPR_TYPE_STRING) {
+    __compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
+    __compiler_appendf("    push rdi\n");
+  } else {
+    __compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
+    __compiler_appendf("    push rdi\n");
+
+    __compiler_appendf("    mov rdi, qword [rsp + %llu]\n", (c->stack_pos - var->stack_pos - 1) * 8);
+    __compiler_appendf("    push rdi\n");
+  }
+
+
+  return true;
+ 
 }
 
-//m
-//len
-//m
-//len
+bool compiler_compile_expr_add(Compiler *c, Expr *expr) {
+
+  Expr *lhs = expr->as.binary.lhs;
+  Expr *rhs = expr->as.binary.lhs;
+
+  //TODO: add typechecking
+  
+  if(!compiler_compile_expr(c, lhs)) {
+    return false;
+  }
+
+  if(!compiler_compile_expr(c, rhs)) {
+    return false;
+  }
+
+  __compiler_appendf("    pop rdi\n");
+  __compiler_appendf("    pop rax\n");
+  __compiler_appendf("    add rdi, rax\n");
+  __compiler_appendf("    push rdi\n");
+
+  return true;
+}
 
 void compiler_compile_expr_number(Compiler *c, Expr *expr) {
   u64 out;
@@ -103,6 +123,11 @@ bool compiler_compile_expr(Compiler *c, Expr *expr) {
     assert(buffer_size < sizeof(buffer));
     compiler_compile_expr_string(c, string_from(buffer, buffer_size), expr);
   } break;
+  case EXPR_TYPE_ADD: {
+    if(!compiler_compile_expr_add(c, expr)) {
+      return false;
+    }
+  } break;
   default: {
     printf("Unimplemented expr in compiler_copmile_expr: %s\n", expr_type_name(expr->type));
     assert(!"unimplemented");
@@ -116,20 +141,16 @@ bool compiler_compile_statement_decl(Compiler *c, Statement *statement) {
 
   __compiler_appendf("\n    ;; "str_fmt" := ...\n", str_arg(statement->identifier));
   
-  Expr *expr = statement->as.expr;  
+  Expr *expr = statement->as.expr;
 
   string identifier = statement->identifier;
-  for(u64 i=0;i<c->vars.len;i++) {
-    Compiler_Variable *var = &c->vars.items[i];
-    if(string_eq(var->identifier, identifier)) {
-
-      __compiler_error(c, identifier, "Variable: '"str_fmt"' is already decleared", str_arg(identifier));
-      
-      return false;
-    }
+  if(compiler_get_variable(c, identifier, NULL)) {
+    __compiler_error(c, identifier, "Variable: '"str_fmt"' is already decleared", str_arg(identifier));      
+    return false;    
   }
   
   switch(expr->type) {
+  case EXPR_TYPE_ADD:
   case EXPR_TYPE_NUMBER:
   case EXPR_TYPE_VARIABLE: {
     if(!compiler_compile_expr(c, expr)) {
@@ -163,16 +184,21 @@ bool compiler_compile_statement_print(Compiler *c, Statement *statement) {
   Expr *expr = statement->as.expr;
   if(expr->type == EXPR_TYPE_VARIABLE) {
     
+    Compiler_Variable *var;
     string identifier = expr->as.content;
-    for(u64 i=0;i<c->vars.len;i++) {
-      Compiler_Variable *var = &c->vars.items[i];
-      if(string_eq(var->identifier, identifier)) {
-        if(var->type != EXPR_TYPE_STRING) {
-	  __compiler_error(c, expr->as.content, "Can not print %s", expr_type_name(var->type));
-	  return false;
-	}
+    if(compiler_get_variable(c, identifier, &var)) {
+
+      if(var->type != EXPR_TYPE_STRING) {
+	__compiler_error(c, expr->as.content, "Can not print %s", expr_type_name(var->type));
+	return false;	
+      } else {
+	//pass, all good
       }
-    }    
+
+    } else {
+      __compiler_error(c, expr->as.content, "undefined variable: "str_fmt, str_arg(identifier));
+      return false;
+    }
     
   } else if(expr->type != EXPR_TYPE_STRING) {
     __compiler_error(c, expr->as.content, "Can not print %s", expr_type_name(expr->type));
@@ -207,16 +233,21 @@ bool compiler_compile_statement_exit(Compiler *c, Statement *statement) {
   Expr *expr = statement->as.expr;
   if(expr->type == EXPR_TYPE_VARIABLE) {
     
+    Compiler_Variable *var;
     string identifier = expr->as.content;
-    for(u64 i=0;i<c->vars.len;i++) {
-      Compiler_Variable *var = &c->vars.items[i];
-      if(string_eq(var->identifier, identifier)) {
-        if(var->type != EXPR_TYPE_NUMBER) {
-	  __compiler_error(c, expr->as.content, "exit expects EXPR_NUMBER but got %s", expr_type_name(var->type));
-	  return false;
-	}
+    if(compiler_get_variable(c, identifier, &var)) {
+
+      if(var->type != EXPR_TYPE_NUMBER) {
+	__compiler_error(c, expr->as.content, "exit expects EXPR_NUMBER but got %s", expr_type_name(var->type));
+	return false;	
+      } else {
+	//pass, all good
       }
-    }    
+
+    } else {
+      __compiler_error(c, expr->as.content, "undefined variable: "str_fmt, str_arg(identifier));
+      return false;
+    }
     
   } else if(expr->type != EXPR_TYPE_NUMBER) {
     __compiler_error(c, expr->as.content, "exit expects EXPR_NUMBER but got %s", expr_type_name(expr->type));
@@ -303,4 +334,16 @@ bool compiler_compile(Compiler *c, string_builder *sb) {
   da_append(sb, '\0');
 
   return true;
+}
+
+bool compiler_get_variable(Compiler *c, string identifier, Compiler_Variable **out) {
+  for(u64 i=0;i<c->vars.len;i++) {
+    Compiler_Variable *var = &c->vars.items[i];
+    if(string_eq(var->identifier, identifier)) {
+      if(out) *out = var;
+      return true;
+    }
+  }
+
+  return false;
 }

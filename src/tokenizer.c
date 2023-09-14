@@ -84,6 +84,10 @@ bool tokenizer_next(Tokenizer *t, Token *token) {
   case ';': __tokenizer_tokenize_singleton(TOKEN_TYPE_SEMI);
   case '(': __tokenizer_tokenize_singleton(TOKEN_TYPE_OPEN_PARENT);
   case ')': __tokenizer_tokenize_singleton(TOKEN_TYPE_CLOSE_PARENT);
+  case '+': __tokenizer_tokenize_singleton(TOKEN_TYPE_PLUS);
+  case '-': __tokenizer_tokenize_singleton(TOKEN_TYPE_MINUS);
+  case '*': __tokenizer_tokenize_singleton(TOKEN_TYPE_STAR);
+  case '/': __tokenizer_tokenize_singleton(TOKEN_TYPE_DASH);
     
   }
 

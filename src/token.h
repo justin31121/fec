@@ -1,6 +1,7 @@
 #ifndef TOKEN_H
 #define TOKEN_H
 
+#include <stdbool.h>
 #include "string.h"
 
 typedef enum{
@@ -9,6 +10,10 @@ typedef enum{
   TOKEN_TYPE_SEMI,
   TOKEN_TYPE_OPEN_PARENT,
   TOKEN_TYPE_CLOSE_PARENT,
+  TOKEN_TYPE_PLUS,
+  TOKEN_TYPE_MINUS,
+  TOKEN_TYPE_STAR,
+  TOKEN_TYPE_DASH,
 
   TOKEN_TYPE_NUMBER,
   TOKEN_TYPE_NAME,
@@ -20,6 +25,7 @@ typedef enum{
 }Token_Type;
 
 const char *token_type_name(Token_Type type);
+bool token_type_is_operator(Token_Type type);
 
 typedef struct{
   Token_Type type;
