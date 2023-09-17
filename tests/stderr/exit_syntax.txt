@@ -1,1 +1,1 @@
-tests/src/exit_syntax.fe:1:5: ERROR: Expected TOKEN_OPEN_PARENT but found TOKEN_CLOSE_PARENT
+tests/src/exit_syntax.fe:1:6: ERROR: Expected EXPR but found TOKEN_OPEN_PARENT

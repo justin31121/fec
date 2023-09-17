@@ -1,0 +1,1 @@
+tests/src/print_syntax.fe:1:7: ERROR: Expected EXPR but found TOKEN_OPEN_PARENT

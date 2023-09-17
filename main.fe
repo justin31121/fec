@@ -1,0 +1,3 @@
+print("yoyoyo");
+
+exit(1);

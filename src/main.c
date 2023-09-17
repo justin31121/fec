@@ -112,7 +112,8 @@ s32 main(s32 argc, s8 **argv) {
 
   cmd.len = 0;
 #ifdef _MSC_VER
-  cmd_append(&cmd, "link", "/ENTRY:main", "/SUBSYSTEM:console", "/OUT:main.exe", "main.obj", "kernel32.lib");
+  name_exe = cstrf("/OUT:%s", name_exe);
+  cmd_append(&cmd, "link", "/ENTRY:main", "/SUBSYSTEM:console", name_exe, name_obj, "kernel32.lib");
 #else
   cmd_append(&cmd, "ld", "-LC:\\Windows\\System32", "-o", name_exe, name_obj, "-lkernel32");
 #endif // _MSC_VER

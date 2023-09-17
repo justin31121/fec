@@ -47,7 +47,7 @@ static inline s32 string_last_index_of_impl(const s8 *haystack, u64 haystack_siz
     return -1;
   }
   
-  s32 i;
+  u64 i;
 
   for(i=haystack_size - needle_size - 1;i>=0;i--) {
     u64 j;
@@ -57,7 +57,7 @@ static inline s32 string_last_index_of_impl(const s8 *haystack, u64 haystack_siz
       }
     }
     if(j == needle_size) {
-      return i;
+      return (s32) i;
     }
   }
   

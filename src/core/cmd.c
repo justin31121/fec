@@ -24,6 +24,7 @@ void cmd_append_impl(Cmd *cmd, ...) {
 
 bool cmd_execute(Cmd *cmd, u8 *exit_code, string_builder *sb, string_builder *stdout_sb, string_builder *stderr_sb) {
 
+  string_builder fallback_sb = {0};
   bool result = true;
 
   HANDLE stdout_read = INVALID_HANDLE_VALUE;
@@ -74,7 +75,6 @@ bool cmd_execute(Cmd *cmd, u8 *exit_code, string_builder *sb, string_builder *st
     si.hStdError = stderr_write;
   }  
 
-  string_builder fallback_sb = {0};
   s8 *cstr;
   if(sb) {
     cstr = cmd_to_cstr(cmd, sb);
@@ -153,7 +153,6 @@ bool cmd_execute(Cmd *cmd, u8 *exit_code, string_builder *sb, string_builder *st
   if(stdout_write != INVALID_HANDLE_VALUE) CloseHandle(stdout_write);
   if(stderr_read != INVALID_HANDLE_VALUE) CloseHandle(stderr_read);
   if(stderr_write != INVALID_HANDLE_VALUE) CloseHandle(stderr_write);
-
 
   return result;
 }
