@@ -26,6 +26,11 @@
 
 IO_DEF bool io_slurp_file(const char *filepath, unsigned char **data, size_t *data_size);
 IO_DEF bool io_write_file(const char *filepath, unsigned char *data, size_t data_size);
+IO_DEF bool io_delete_file(const char *filepath);
+
+IO_DEF bool io_create_dir(const char *dir_path, bool *existed);
+IO_DEF bool io_delete_dir(const char *dir_path);
+
 IO_DEF bool io_exists(const char *file_path, bool *is_file);
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -146,12 +151,77 @@ IO_DEF bool io_write_file(const char *filepath, unsigned char *data, size_t data
   return true;
 }
 
+IO_DEF bool io_delete_file(const char *filepath) {
+  if(!DeleteFile(filepath)) {
+    IO_LOG("Failed to delete file '%s': (%d) %s",
+	   filepath, io_last_error(), io_last_error_cstr());
+    return false;
+  }
+
+  return true;
+}
+
+IO_DEF bool io_create_dir(const char *dir_path, bool *_existed) {
+  if(CreateDirectory(dir_path, NULL)) {
+    if(_existed) *_existed = false;
+    return true;
+  } else {
+    bool existed = io_last_error() == ERROR_ALREADY_EXISTS;
+    if(!existed) {
+      IO_LOG("Failed to create direcory '%s': (%d) %s",
+	     dir_path, io_last_error(), io_last_error_cstr());
+      return false;
+    }
+  
+    if(_existed) *_existed = existed;    
+    return true;    
+  }
+}
+
+IO_DEF bool io_delete_dir(const char *dir_path) {
+  Io_Dir dir;
+  if(!io_dir_open(&dir, dir_path)) {
+    return true;
+  }
+
+  Io_Dir_Entry entry;
+  while(io_dir_next(&dir, &entry)) {
+
+    if(strncmp(entry.name, ".", 1) == 0 ||
+       strncmp(entry.name, "..", 2) == 0) {
+      continue;
+    }
+    
+    if(entry.is_dir) {
+      if(!io_delete_dir(entry.abs_name)) {
+	io_dir_close(&dir);
+	return false;
+      }
+    } else {
+      if(!io_delete_file(entry.abs_name)) {
+	io_dir_close(&dir);
+	IO_LOG("Failed to delete directory '%s': Can not delete file: '%s'", dir_path, entry.name);
+	return false;
+      }
+    }
+  }
+
+  io_dir_close(&dir);
+
+  if(!RemoveDirectory(dir_path)) {
+    IO_LOG("Failed to remove direcory '%s': (%d) %s",
+	   dir_path, io_last_error(), io_last_error_cstr()); 
+    return false;
+  }
+  
+  return true;
+}
+
 IO_DEF bool io_exists(const char *file_path, bool *is_file) {
   DWORD attribs = GetFileAttributes(file_path);
   if(is_file) *is_file = !(attribs & FILE_ATTRIBUTE_DIRECTORY);
   return attribs != INVALID_FILE_ATTRIBUTES;
 }
-
 ////////////////////////////////////////////////////////////////////////////////////////
 
 IO_DEF bool io_dir_open(Io_Dir *dir, const char *dir_path) {

@@ -1,7 +1,0 @@
-message := "Hello, Seaman!";
-
-exitCode := 0;
-
-print(message);
-
-exit(exitCode);

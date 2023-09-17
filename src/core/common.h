@@ -46,4 +46,9 @@ typedef double f64;
     }									\
     (n)->items[(n)->len++] = x;						\
   }while(0)
-  
+
+s8 *cstrf_impl(void *space, u64 space_len, const s8 *_fmt, const s8 *fmt, ...);
+#define cstrf_len(n) _alloca((n)), (n)
+#define cstrf(...) cstrf_impl( cstrf_len(snprintf(NULL, 0, __VA_ARGS__)+1) , "", __VA_ARGS__)
+
+#define bufsnprintf(buf, ...) assert( snprintf((buf), sizeof((buf)), __VA_ARGS__) < (s32) sizeof((buf)))

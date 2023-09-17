@@ -1,11 +1,11 @@
 #include <stdio.h>
 
 #define IO_IMPLEMENTATION
-#include "io.h"
+#include "core/io.h"
 
-#include "compiler.h"
+#include "core/compiler.h"
 
-#include "cmd.h"
+#include "core/cmd.h"
 
 s8 *next(s32 *argc, s8 ***argv) {
   if(*argc == 0) {
@@ -29,13 +29,45 @@ void *global_alloc(void *userdata, u64 size_bytes) {
 s32 main(s32 argc, s8 **argv) {
 
   s8 *prog = next(&argc, &argv);
-  s8 *input = next(&argc, &argv);
-  if(!input) {
+
+  string s = (string) {0};
+  s8 *arg = next(&argc, &argv);
+  if(!arg) {
     fprintf(stderr, "ERROR: Please provide an argument\n");
-    fprintf(stderr, "USAGE: %s <source>\n", prog);
+    fprintf(stderr, "USAGE: %s [-o output-name>] <input_name>\n", prog);
     return 1;
   }
 
+  if(strcmp(arg, "-o") == 0) {
+    arg = next(&argc, &argv);
+    if(!arg) {
+      fprintf(stderr, "ERROR: No output path specified\n");
+      fprintf(stderr, "USAGE: %s [-o <output-name>] <input_name>\n", prog);
+      return 1;
+    }
+    s = string_from_cstr(arg);
+    arg = next(&argc, &argv);
+  }
+  
+  if(!arg) {
+    fprintf(stderr, "ERROR: No input specified\n");
+    fprintf(stderr, "USAGE: %s [-o <output-name>] <input_name>\n", prog);
+    return 1;
+  }
+  s8 *input = arg;
+
+  if(!s.len) {
+    s = string_from_cstr(input);
+    s32 pos = string_last_index_of(s, ".");
+    if(pos >= 0) {
+      assert(string_substring(s, 0, pos, &s));
+    }    
+  }
+
+  s8 *name_asm = cstrf(str_fmt".asm", str_arg(s));
+  s8 *name_obj = cstrf(str_fmt".obj", str_arg(s));
+  s8 *name_exe = cstrf(str_fmt".exe", str_arg(s));
+  
   string_builder sb = {0};
 
   ////////////////////////////////////////////////////////////////
@@ -47,28 +79,28 @@ s32 main(s32 argc, s8 **argv) {
     return 1;
   }
 
+  sb.len = 0;
   if(!compiler_compile(&compiler, &sb)) {
     return 1;
   }
-  
+
   assert(sb.len);
-  if(!io_write_file("main.asm", sb.items, sb.len - 1)) {
+  if(!io_write_file(name_asm, sb.items, sb.len)) {
     return 1;
   }
-  sb.len = 0;
 
   ////////////////////////////////////////////////////////////////
   
   // Assemble
 
   Cmd cmd = {0};
-  cmd_append(&cmd, "nasm", "-f", "win64", "main.asm", "-o", "main.obj");
+  cmd_append(&cmd, "nasm", "-f", "win64", name_asm, "-o", name_obj);
   u8 code;
-  if(!cmd_execute(&cmd, &code, &sb)) {
+  sb.len = 0;
+  if(!cmd_execute(&cmd, &code, &sb, NULL, NULL)) {
     fprintf(stderr, "ERROR: Can not execute 'nasm'. Make sure its on your PATH\n");
     return 1;
   }
-  cmd.len = 0;
 
   if(code != 0) {
     return 1;
@@ -78,13 +110,15 @@ s32 main(s32 argc, s8 **argv) {
 
   // Link
 
+  cmd.len = 0;
 #ifdef _MSC_VER
-  cmd_append(&cmd, "link", "/ENTRY:_main", "/SUBSYSTEM:console", "/OUT:main.exe", "main.obj", "kernel32.lib");
+  cmd_append(&cmd, "link", "/ENTRY:main", "/SUBSYSTEM:console", "/OUT:main.exe", "main.obj", "kernel32.lib");
 #else
-  cmd_append(&cmd, "ld", "-LC:\\Windows\\System32", "-o", "main.exe", "main.obj", "-lkernel32");
+  cmd_append(&cmd, "ld", "-LC:\\Windows\\System32", "-o", name_exe, name_obj, "-lkernel32");
 #endif // _MSC_VER
 
-  if(!cmd_execute(&cmd, &code, &sb)) {
+  sb.len = 0;
+  if(!cmd_execute(&cmd, &code, &sb, NULL, NULL)) {
     fprintf(stderr, "ERROR: Can not link. Make sure it to have either 'ld' or 'link'installed and in your PATH\n");
     return 1;    
   }

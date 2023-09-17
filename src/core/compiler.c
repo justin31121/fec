@@ -19,13 +19,13 @@ bool compiler_from(const char *filepath, Parser_Alloc parser_alloc, void *userda
 #define __compiler_appendf(...) do{					\
     c->buffer_size = snprintf((s8 *) c->buffer, sizeof(c->buffer), __VA_ARGS__); \
     assert(c->buffer_size < sizeof(c->buffer));				\
-    da_append_many(c->sb, c->buffer, c->buffer_size);			\
+    string_builder_append(c->sb, c->buffer, c->buffer_size);			\
   }while(0)
 
 #define __compiler_temp_appendf(...) do{				\
     c->buffer_size = snprintf((s8 *) c->buffer, sizeof(c->buffer), __VA_ARGS__); \
     assert(c->buffer_size < sizeof(c->buffer));				\
-    da_append_many(&c->temp, c->buffer, c->buffer_size);		\
+    string_builder_append(&c->temp, c->buffer, c->buffer_size);		\
   }while(0)
 
 #define __compiler_error(c, str, ...) do{				\
@@ -300,13 +300,13 @@ bool compiler_compile(Compiler *c, string_builder *sb) {
   c->stack_pos = 0;
   c->temp_strings = 0;
 
-  __compiler_appendf("    global _main\n");
+  __compiler_appendf("    global main\n");
   __compiler_appendf("    extern ExitProcess\n");
   __compiler_appendf("    extern GetStdHandle\n");
   __compiler_appendf("    extern WriteFile\n\n");
   
   __compiler_appendf("    section .text\n");
-  __compiler_appendf("_main:\n");
+  __compiler_appendf("main:\n");
   __compiler_appendf("    sub rsp, 8+8\n");
 
   Statements statements = {0};
@@ -328,10 +328,8 @@ bool compiler_compile(Compiler *c, string_builder *sb) {
 
   if(c->temp.len) {
     __compiler_appendf("\n");
-    da_append_many(c->sb, c->temp.items, c->temp.len);
+    string_builder_append(c->sb, c->temp.items, c->temp.len);
   }
-
-  da_append(sb, '\0');
 
   return true;
 }
