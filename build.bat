@@ -1,4 +1,2 @@
-::gcc -Wall -Wextra -pedantic -ggdb -o fec src\main.c src\core\*.c
-::gcc -Wall -Wextra -pedantic -ggdb -o test src\test.c src\core\*.c
-cl /W4 /Fe:fec src\main.c src\core\*.c
-cl /W4 /Fe:test src\test.c src\core\*.c
+nasm -f win64 main.asm -o main.obj
+link /ENTRY:main /OUT:main.exe main.obj kernel32.lib

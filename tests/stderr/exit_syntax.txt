@@ -1,1 +1,0 @@
-tests/src/exit_syntax.fe:1:6: ERROR: Expected EXPR but found TOKEN_OPEN_PARENT

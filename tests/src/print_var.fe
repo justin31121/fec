@@ -1,3 +1,0 @@
-message := "The Message";
-
-print(message);
