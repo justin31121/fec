@@ -1,0 +1,12 @@
+#foreign ExitProcess(x : u8);
+
+main :: {
+
+     ExitProcess(0);
+     /*
+	mov rcx, 0
+	sub rsp, 40
+	call ExitProcess
+	add rsp,40
+     */
+}
