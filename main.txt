@@ -1,0 +1,431 @@
+#foreign ExitProcess : (code : u8) -> void;
+#foreign GetLastError : (void) -> s32;
+#foreign GetStdHandle : (value : s32) -> u64*;
+#foreign WriteFile : (handle : u64*, 
+                      buf : u8*, 
+                      buf_len : u64, 
+                      written : u32*, 
+                      overlapped : u64*);
+
+STD_OUTPUT_HANDLE : s32 : -11;
+INVALID_HANDLE_VALUE : u64* : -1
+CONSTANT : s32 : -1
+NULL : u64* : 0;
+
+string : struct {
+	u8* data;
+	u64 len;
+}
+
+string_from_cstr : (cstr : u8*) -> string {
+	return { cstr, strlen(cstr) };
+}
+
+double : (x : s32) -> s32 {
+	return x * 2;
+}
+
+foo : (void) -> s32 {
+	return -1;
+}
+
+bar : (x : s32) -> void {
+}
+
+/*
+	"registers": [
+		"rax",
+	],
+
+	"data": [
+		{
+			"type": BYTES,
+			"qualifier": "data0",
+			"value": "Hello, World!"
+		},
+		{
+			"type": QWORD,
+			"qualifier": "data0_len",
+			"value": 13
+		},
+	],
+
+	"structs": [
+		{
+			"qualifier": "string",
+			"fields": [
+				{
+					"qualifier": "data",
+					"type": "u8*",
+					"off": 0
+				},
+				{
+					"qualifier": "len",
+					"type": u64,
+					"off": 8
+				},	
+			],
+		},
+	],
+
+	"vars": [
+		{
+			"qualifier": "handle",
+			"type": "u64*",
+			"off": 0,
+		},
+		{
+			"qualifier": "s",
+			"type": "string"
+			"off": sizeof(u64*),
+		},
+		{
+			"qualifier": "written",	
+			"type": "u32",
+			"off": sizeof(u64*) + sizeof(string),
+		},
+		{
+			"qualifier": "result",
+			"type": "bool",
+			"off": sizeof(u64*) + sizeof(string) + sizeof(u32),
+		},
+	],
+
+	"exprs": [
+		{
+			"kind": ALLOC,
+			"size": sizeof(u64*),
+		},
+		{
+			"kind": CALL,
+			"qualifier": "GetStdHandle",
+			"args": [
+				STD_OUTPUT_HANDLE,
+			],
+		},
+		{
+			"kind": ASSIGN,
+			"lhs": vars[0].off,		// "handle"
+			"rhs": registers[0], 		// rax
+		},
+		{
+			"kind": IF,
+			"operator": EQUALS,
+			"lhs": vars[0].off,			// "handle"
+			"rhs": INVALID_HANDLE_VALUE,
+			"body": [
+				{
+					"kind": CALL,
+					"qualifier": "GetLastError",
+					"args": [],
+				},
+				{
+					"kind": CALL,
+					"qualifier": "ExitProcess"
+					"args": [
+						registers[0]
+					],
+				},
+			],
+		},
+		{
+			"kind": ALLOC,
+			"size": sizeof(string),
+		},
+		{
+			"kind": ASSIGN,
+			"lhs": vars[1].off + vars[1][0].off,		// "s.data"
+			"rhs": data[0],					// "data1"
+		},
+		{
+			"kind": ASSIGN,
+			"lhs": vars[1].off + vars[1][0].off,		// "s.len"
+			"rhs": data[1],					// "data1_len"
+		},
+		{
+			"kind": ALLOC,
+			"size": sizeof(u32),
+		},
+		{
+			"kind": ALLOC,
+			"size": sizeof(bool),
+		},
+		{
+			"kind": CALL,
+			"qualifier": "WriteFile",
+			"args": [
+				vars[0].off,			// "handle"
+				vars[1].off + vars[1][0].off,	// "s.data"
+				vars[1].off + vars[1][1].off,	// "s.len"
+				&vars[2].off,			// "&written"
+				NULL,
+			],
+		},
+		{
+			"kind": ASSIGN,
+			"lhs": vars[3].off,				// "s.len"
+			"rhs": registers[0],				// "data1_len"
+		},
+		{
+			"kind": IF,
+			"operator": EQUALS,
+			"lhs": vars[3].off,
+			"rhs": NULL,
+			"body": [
+				{
+					"kind": CALL,
+					"qualifier": "GetLastError",
+					"args": [],
+				},
+				{
+					"kind": CALL,
+					"qualifier": "ExitProcess"
+					"args": [
+						registers[0]
+					],
+				},
+			],
+		},
+		{
+			"kind": DEALLOC,
+			"size": vars[0].size + 	...	
+		},
+		{
+			"kind": CALL,
+			"qualifier": "ExitProcess"
+			"args": [
+				0
+			]
+		},
+	]
+*/
+
+/*
+	<PROGRAM> = "" | <WS> + <STATEMENT> + <WS> + ";" + <WS> | <PROGRAM> + <PROGRAM>
+
+	<STATEMENT> = <FUNCCALL> | <DECLARATION> | <ASSIGNMENT>
+	<DECLARATION> = <VARIABLE> + <WS> + ":" + <WS> + <TYPE>
+	<ASSIGNMENT> = <VARIABLE> + <WS> + "=" + <WS> + <EXPRESSION>
+	<TYPE> = <LABEL>
+
+	<EXPRESSION> = <CONSTANT> | <VARIABLE> | <FUNCCALL>
+	<FUNCCALL> = <LABEL> + <WS> + "(" + <ARGUMENTS> + ")"
+	<ARGUMENTS> = "" | <WS> + <EXPRESSION> + <WS> | <ARGUMENTS> + "," + <ARGUMENTS>
+	<VARIABLE> = <LABEL>
+	<LABEL> = "a" | "b" | ... | "ab" | ...
+	<CONSTANT> = ... | "-1" | "0" | "1" | ...
+	<WS> = "" | " " | "\n" | "\t" | ... | <WS> + <WS>
+
+	Program
+		Statement
+			Kind=Declare
+			Name=handle
+			Size=8
+		Statement
+			Kind=Assign
+			Lhs=Expr
+				Kind=Variable
+				Name=handle
+			Rhs=Expr
+				Kind=Funccall
+				Name=GetStdHandle
+				Arguments=Expr
+					Kind=Constant
+					Value=STD_OUTPUT_HANDLE
+		Statement
+			Kind=If
+			Operator=Equals
+			Lhs=
+				Expr
+					Kind=Variable
+					Name=handle
+			Rhs=Expr
+				Kind=Constant
+				Value=INVALID_HANDLE_VALUE
+			Body=Program
+				Statement
+					Kind=Funccall
+					Name=ExitProcess
+					Arguments=
+						Expr
+							Kind=Funccall
+							Name=GetLastError
+							Arguments=_
+		Statement
+			Kind=Declare
+			Name=s
+			Size=16
+		Statement
+			Kind=Assign
+			Lhs
+				Expr
+					Kind=StructField
+					Name=data
+					TargetName=s
+			Rhs
+				Expr
+					Kind=Data
+					Name=data0
+		Statement
+			Kind=Assign
+			Lhs
+				Expr
+					Kind=StructField
+					Name=len
+					TargetName=s
+			Rhs
+				Expr
+					Kind=Data
+					Name=data0_len
+		Statement
+			Kind=Declare
+			Name=written
+			Size=16
+		Statement
+			Kind=Declare
+			Name=result
+			Size=1
+		Statement
+			Kind=Assign
+			Lhs
+				Expr
+					Kind=Variable
+					Name=result
+			Rhs
+				Expr
+					Kind=Funccall
+					Name=WriteFile
+					Arguments
+						Expr
+							Kind=Variable
+							Name=handle
+						Expr
+							Kind=StructField
+							Name=data
+							TargetName=s
+						Expr
+							Kind=StructField
+							Name=len
+							TargetName=s
+						Expr
+							Kind=Pointer
+							Variable=written
+						Expr
+							Kind=Constant
+							Value=0
+		Statement
+			Kind=If
+			Operator=Equals
+			Lhs
+				Expr
+					Kind=Variable
+					Name=result
+			Rhs
+				Expr
+					Kind=Constant
+					Name=0
+			Body=Program
+				Statement
+					Kind=Funccall
+					Name=ExitProcess
+					Arguments=
+						Expr
+							Kind=Funccall
+							Name=GetLastError
+							Arguments=_
+*/
+
+main_windows : (void) -> void {
+	handle : u64* = GetStdHandle(STD_OUTPUT_HANDLE);
+	/*
+			sub rsp, sizeof(u64*)			;; ALLOC handle : u64*
+			mov rcx, STD_OUTPUT_HANDLE
+			sub rsp, 40
+			call GetStdHandle
+			add rsp, 40
+			mov [rsp + $OFFSET(handle) ], rax
+	*/
+	if handle == INVALID_HANDLE_VALUE {
+		ExitProcess(GetLastError() as u8);
+	}
+	/*
+			cmp [rsp + $OFFSET(handle)], INVALID_HANDLE_VALUE
+			jz .error1
+			jmp .erorr1_continue;
+		.erorr1:
+			sub rsp, 40
+			call GetLastError
+			add rsp, 40
+
+			mov rcx, rax
+			sub rsp, 40
+			call ExitProcess
+			add rsp, 40
+		.error1_continue:
+	*/
+
+	s : string = "Hello, World!";
+	/*
+			sub rsp, sizeof(string)			;; ALLOC s : string
+			mov [rsp + $OFFSET(s) + string_data], data0
+			mov [rsp + $OFFSET(s) + string_len], data0_len
+	*/
+	written : u32;
+	/*
+			sub rsp, sizeof(written)		;; ALLOC written : u32
+	*/
+	bool result = WriteFile(handle, s.data, s.len, &written, NULL);
+	/*
+			sub rsp, sizeof(bool)			;; ALLOC result : bool
+			mov rcx, [rsp + $OFFSET(handle)]
+			mov rdx, [rsp + $OFFSET(s) + string_data]
+			mov r8, [rsp + $OFFSET(s) + string_len]
+			lea r9, [rsp + $OFFSET(written)]
+			push qword NULL
+			sub rsp, 32
+			call WriteFile
+			add rsp, 40
+			mov [rsp + $OFFSET(result)], rax
+	*/
+	if result == 0 {
+		ExitProcess(GetLastError() as u8);
+	}
+	/*
+			mov rax, [rsp + $OFFSET(result)]
+			test rax, rax
+			jz .error2
+			jmp .error2_continue
+		.error2:
+			sub rsp, 40
+			call GetLastError
+			add rsp, 40
+
+			mov rcx, rax
+			sub rsp, 40
+			call ExitProcess
+			add rsp, 40
+		.error2_continue:
+	*/
+
+	/*
+			add rsp, sizeof(u64*)			;; DEALLOC handle : u64*
+			add rsp, sizeof(string)			;; DEALLOC s : string
+			add rsp, sizeof(u32)			;; DEALLOC written : u32
+			add rsp, sizeof(bool)			;; DEALLOC result : bool
+
+			mov rcx, 0
+			sub rsp, 40
+			call ExitProcess
+	*/
+}
+
+main : (void) -> void {
+	x : s32 = 69;
+	x = 420;
+
+	buf : u8[1024];
+	ptr : u8* = buf + 512;
+	*ptr = 'a';
+
+	println("Hello, World! This is x: %", x);
+}
