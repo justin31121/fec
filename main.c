@@ -10,7 +10,7 @@
 
 #define FILE_PATH "main.asm"
 
-#define panic(fmt, ...) do{ fprintf(stderr, "%s:%d:%s:ERROR: " fmt "\n", __FILE__, __LINE__, __func__, #__VA_ARGS__); exit(1); }while(0)
+#define panic(fmt, ...) do{ fprintf(stderr, "%s:%d:%s:ERROR: " fmt "\n", __FILE__, __LINE__, __func__, __VA_ARGS__); exit(1); }while(0)
 
 typedef long long int s64;
 typedef unsigned long long int u64;
@@ -112,6 +112,34 @@ struct Expr{
   }as;
 };
 
+typedef struct{
+  Expr *data;
+  u64 len;
+  u64 cap;
+}Exprs;
+
+#define INITIAL_CAP 64
+
+Expr *exprs_append(Exprs *s) {
+  if(s->len < s->cap) {
+    return &s->data[s->len++];
+  }
+
+  if(s->cap == 0) {
+    s->cap = INITIAL_CAP;
+  } else {
+    s->cap = s->cap * 2;
+  }
+
+  s->data = realloc(s->data, s->cap * sizeof(Expr));
+  if(!s->data) {
+    fprintf(stderr, "ERROR: Failed to realloc\n");
+    exit(1);
+  }
+
+  return &s->data[s->len++];
+}
+
 typedef enum{
   STMT_TYPE_NONE,
   STMT_TYPE_DECLARATION,
@@ -160,8 +188,6 @@ struct Stmts{
   u64 len;
   u64 cap;
 };
-
-#define INITIAL_CAP 64
 
 Stmt *stmts_append(Stmts *s) {
   if(s->len < s->cap) {
@@ -245,7 +271,7 @@ struct Constant{
 
   Constant_Type type;
   union{
-    u8 *cstrval;
+    char *cstrval;
     u64 uval;
   }as;
   
@@ -280,7 +306,8 @@ Constant *constants_append(Constants *s) {
 typedef struct{
   Constants constants;
   Stmts stmts;
-  Vars vars;  
+  Vars vars;
+  Exprs exprs;
   
   u64 stack_ptr;
 }Program;
@@ -590,8 +617,17 @@ void program_stmt_compile(Program *p, Stmt *s, string_builder *sb) {
     } break;
     }
 
+    u64 vars_len = p->vars.len;
+    u64 stack_ptr_before = p->stack_ptr;
+
     for(u64 i=0;i<iff->body->len;i++) {
       program_stmt_compile(p, &iff->body->data[i], sb);
+    }
+
+    p->vars.len = vars_len;
+    if(stack_ptr_before != p->stack_ptr) {
+      string_builder_append(sb, "        add rsp, %llu\n", p->stack_ptr - stack_ptr_before);
+      p->stack_ptr = stack_ptr_before;
     }
 
     string_builder_appendf(sb, ".label_%p:\n", (void *) s);
@@ -607,6 +643,9 @@ void program_stmt_compile(Program *p, Stmt *s, string_builder *sb) {
 }
 
 void program_constant_compile(Program *p, Constant *c, string_builder *sb) {
+
+  (void) p;
+  
   switch(c->type) {
 
   case CONSTANT_TYPE_STRING: {
@@ -630,9 +669,9 @@ void program_constant_compile(Program *p, Constant *c, string_builder *sb) {
     
     
     string_builder_appendf(sb, "constant_%p: db ", (void *) c);
-    for(u64 i=0;i<s.len;i++) {
-      string_builder_appendf(sb, "%u", s.data[i]);
-      if(i != s.len - 1) {
+    for(u64 j=0;j<s.len;j++) {
+      string_builder_appendf(sb, "%u", s.data[j]);
+      if(j != s.len - 1) {
         string_builder_appendc(sb, ",");
       }
     }
@@ -751,17 +790,9 @@ void stmts_append_if(Stmts *s,
   stmt_if->body = body;
 }
 
-// TODO:
-//     derefence ptr
-//     structures
-//     allocate arrays on stack
+///////////////////////////////////////////////////////////
 
-int main() {
-
-  string_builder sb = {0};
-
-  u64 args_len;
-  Expr *args[FUNCCALL_ARGS_CAP];
+Program hello_world_program() {
 
   Program program = {0};
 
@@ -773,99 +804,115 @@ int main() {
   hello_world_len->type = CONSTANT_TYPE_U64;
   hello_world_len->as.uval = 13;
 
-  ///////////////////////////////////////////////////////////
-  
   // handle : u64*
+  string handle;
+  string_copy_cstr("handle", &handle);
   stmts_append_declaration(&program.stmts,
-			   string_from_cstr("handle"),
+			   handle,
 			   TYPE_PTR);
 
   // handle = GetStdHandle(-11);
-  Expr expr_handle = {
-    .type = EXPR_TYPE_VARIABLE,
-    .as.stringval = string_from_cstr("handle")
-  };
-  Expr expr_neg_11 = {
-    .type = EXPR_TYPE_VALUE,
-    .as.sval = -11
-  };
-  Expr expr_GetStdHandle = {
-    .type = EXPR_TYPE_FUNCCALL,
-  };
-  expr_GetStdHandle.as.funccall.name = string_from_cstr("GetStdHandle");
-  expr_GetStdHandle.as.funccall.args_len = 1;
-  expr_GetStdHandle.as.funccall.args[0] = &expr_neg_11;
+  Expr *expr_handle = exprs_append(&program.exprs);
+  expr_handle->type = EXPR_TYPE_VARIABLE;
+  expr_handle->as.stringval = handle;
+
+  Expr *expr_neg_11 = exprs_append(&program.exprs);
+  expr_neg_11->type = EXPR_TYPE_VALUE;
+  expr_neg_11->as.sval = -11;
+  
+  Expr *expr_GetStdHandle = exprs_append(&program.exprs);
+  expr_GetStdHandle->type = EXPR_TYPE_FUNCCALL;
+  string_copy_cstr("GetStdHandle", &expr_GetStdHandle->as.funccall.name);
+  expr_GetStdHandle->as.funccall.args_len = 1;
+  expr_GetStdHandle->as.funccall.args[0] = expr_neg_11;
+  
   stmts_append_assignment(&program.stmts,
-			  &expr_handle,
-			  &expr_GetStdHandle);
+			  expr_handle,
+			  expr_GetStdHandle);
 
   // if(handle == -1) {
   //   ExitProcess(1);
   // }
-  Stmts if_body = {0};
-  Expr expr_1 = {
-    .type = EXPR_TYPE_VALUE,
-    .as.sval = 1
-  };
-  Expr *expr_1_ptr = &expr_1;
+  static Stmts if_body = {0};
+  Expr *expr_1 = exprs_append(&program.exprs);
+  expr_1->type = EXPR_TYPE_VALUE;
+  expr_1->as.sval = 1;
+
+  string exit_process;
+  string_copy_cstr("ExitProcess", &exit_process);
   stmts_append_funccall(&if_body,
-			string_from_cstr("ExitProcess"),
-			&expr_1_ptr,
+		        exit_process,
+			&expr_1,
 			1);
-  Expr expr_neg_1 = {
-    .type = EXPR_TYPE_VALUE,
-    .as.sval = -1
-  };
+  Expr *expr_neg_1 = exprs_append(&program.exprs);
+  expr_neg_1->type = EXPR_TYPE_VALUE;
+  expr_neg_1->as.sval = -1;
+
   stmts_append_if(&program.stmts,
-		  &expr_handle,
+		  expr_handle,
 		  STMT_IF_TYPE_EQUALS,
-		  &expr_neg_1,
+		  expr_neg_1,
 		  &if_body);
 
   // written : u64
+  
   stmts_append_declaration(&program.stmts,
 			   string_from_cstr("written"),
 			   TYPE_U64);
 
   // if(WriteFile(handle, hello_world_data, hello_world_len, &written, NULL) == 0) {
   //   ExitProcess(1);
-  // }
+  // }  
+  Expr *expr_hello_world_data = exprs_append(&program.exprs);
+  expr_hello_world_data->type = EXPR_TYPE_CONSTANT;
+  expr_hello_world_data->as.constant = hello_world_data;
+
+  Expr *expr_hello_world_len = exprs_append(&program.exprs);
+  expr_hello_world_len->type = EXPR_TYPE_CONSTANT;
+  expr_hello_world_len->as.constant = hello_world_len;
+
+  Expr *expr_ptr_to_written = exprs_append(&program.exprs);
+  expr_ptr_to_written->type = EXPR_TYPE_VARIABLE_PTR;
+  string_copy_cstr("written", &expr_ptr_to_written->as.stringval);
+
+  Expr *expr_0 = exprs_append(&program.exprs);
+  expr_0->type = EXPR_TYPE_VALUE;
+  expr_0->as.sval = 0;
+
   Expr *exprs[8];
   u64 exprs_len = 0;
-  Expr expr_hello_world_data = {
-    .type = EXPR_TYPE_CONSTANT,
-    .as.constant = hello_world_data,
-  };
-  Expr expr_hello_world_len = {
-    .type = EXPR_TYPE_CONSTANT,
-    .as.constant = hello_world_len,
-  };
-  Expr expr_ptr_to_written = {
-    .type = EXPR_TYPE_VARIABLE_PTR,
-    .as.stringval = string_from_cstr("written")
-  };
-  Expr expr_0 = {
-    .type = EXPR_TYPE_VALUE,
-    .as.sval = 0,
-  };
-  exprs[exprs_len++] = &expr_handle;
-  exprs[exprs_len++] = &expr_hello_world_data;
-  exprs[exprs_len++] = &expr_hello_world_len;
-  exprs[exprs_len++] = &expr_ptr_to_written;
-  exprs[exprs_len++] = &expr_0;
-  Expr expr_WriteFile = {
-    .type = EXPR_TYPE_FUNCCALL,
-  };
-  expr_WriteFile.as.funccall.name = string_from_cstr("WriteFile");
-  memcpy(&expr_WriteFile.as.funccall.args, exprs, exprs_len * sizeof(Expr *));
-  expr_WriteFile.as.funccall.args_len = exprs_len;
+  exprs[exprs_len++] = expr_handle;
+  exprs[exprs_len++] = expr_hello_world_data;
+  exprs[exprs_len++] = expr_hello_world_len;
+  exprs[exprs_len++] = expr_ptr_to_written;
+  exprs[exprs_len++] = expr_0;
+  
+  Expr *expr_WriteFile = exprs_append(&program.exprs);
+  expr_WriteFile->type = EXPR_TYPE_FUNCCALL;
+  string_copy_cstr("WriteFile", &expr_WriteFile->as.funccall.name);
+  memcpy(&expr_WriteFile->as.funccall.args, exprs, exprs_len * sizeof(Expr *));
+  expr_WriteFile->as.funccall.args_len = exprs_len;
 
   stmts_append_if(&program.stmts,
-		  &expr_WriteFile,
+		  expr_WriteFile,
 		  STMT_IF_TYPE_EQUALS,
-		  &expr_0,
+		  expr_0,
 		  &if_body);
+
+  return program;
+}
+
+// TODO:
+//     derefence ptr
+//     structures
+//     allocate arrays on stack
+
+int main() {
+
+  string_builder sb = {0};
+
   
+  Program program = hello_world_program();
   program_compile(&program, &sb);
 
   printf("\n===================================================\n");

@@ -6,10 +6,10 @@
         section .data
         ;; CONSTANT_STRING
         ;;     value="Hello World!"
-constant_00000175d0ce13d0: db 72,101,108,108,111,32,87,111,114,108,100,33,10
+constant_000001E870872810: db 72,101,108,108,111,32,87,111,114,108,100,33,10
         ;; CONSTANT_U64
         ;;     value=13
-%define constant_00000175d0ce13e0 13
+%define constant_000001E870872820 13
 
         section .text:
 main:
@@ -34,7 +34,7 @@ main:
         ;;         value=-1
         mov qword rcx, -1
         cmp rax, rcx
-        jne .label_00000175d0ce67b0
+        jne .label_000001E870872D00
         ;; STMT_FUNCCALL
         ;;     EXPR_VALUE
         ;;         value=1
@@ -42,7 +42,7 @@ main:
         sub rsp, 40
         call ExitProcess
         add rsp, 40
-.label_00000175d0ce67b0:
+.label_000001E870872D00:
         ;; STMT_DECLARATION
         ;;     name="written"
         ;;     type=u64
@@ -53,9 +53,9 @@ main:
         ;;         name="handle"
         mov rcx, [rsp + 8]
         ;;     EXPR_CONSTANT
-        mov rdx, constant_00000175d0ce13d0
+        mov rdx, constant_000001E870872810
         ;;     EXPR_CONSTANT
-        mov r8, constant_00000175d0ce13e0
+        mov r8, constant_000001E870872820
         ;;     EXPR_VARIABLE_PTR
         lea r9, [rsp + 0]
         ;;     EXPR_VALUE
@@ -68,7 +68,7 @@ main:
         ;;         value=0
         mov qword rcx, 0
         cmp rax, rcx
-        jne .label_00000175d0ce6870
+        jne .label_000001E870872DC0
         ;; STMT_FUNCCALL
         ;;     EXPR_VALUE
         ;;         value=1
@@ -76,7 +76,7 @@ main:
         sub rsp, 32
         call ExitProcess
         add rsp, 32
-.label_00000175d0ce6870:
+.label_000001E870872DC0:
 
         add rsp, 16
         mov rcx, 0
