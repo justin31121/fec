@@ -1,6 +1,5 @@
 #include <stdio.h>
-
-// https://en.wikibooks.org/wiki/X86_Assembly/X86_Architecture
+#include <assert.h>
 
 #define STRING_IMPLEMENTATION
 #include "_string.h"
@@ -8,77 +7,179 @@
 #define IO_IMPLEMENTATION
 #include "io.h"
 
-#define FILE_PATH "main.asm"
-
 #define panic(fmt, ...) do{ fprintf(stderr, "%s:%d:%s:ERROR: " fmt "\n", __FILE__, __LINE__, __func__, __VA_ARGS__); exit(1); }while(0)
 
 typedef long long int s64;
 typedef unsigned long long int u64;
 typedef unsigned char u8;
 
+#define da_append(n, x)	do{						\
+    u64 new_cap = (n)->cap;						\
+    while((n)->len >= new_cap) {					\
+      new_cap *= 2;							\
+      if(new_cap == 0) new_cap = 64;					\
+    }									\
+    if(new_cap != (n)->cap) {						\
+      (n)->cap = new_cap;						\
+      (n)->data = realloc((n)->data, (n)->cap * sizeof(*((n)->data))); \
+      assert((n)->data);						\
+    }									\
+    (n)->data[(n)->len++] = x;						\
+  }while(0)
+
+typedef enum{
+  VALUE_TYPE_NONE = 0,
+  VALUE_TYPE_LITERAL,
+  VALUE_TYPE_REGISTER,
+  VALUE_TYPE_REGISTER_OFF,
+  VALUE_TYPE_WORD,  
+}Value_Type;
+
 char *REGISTER_NAMES[] = {
-  "rcx", "rdx", "r8", "r9", "rax", "rbx", "rsi", "rdi",
+  "rax", "rbx", "rcx", "rsp", "rbp", "rdi", "rsi", "rdx", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
 };
-u64 REGISTER_COUNT =
+u64 REGISTER_NAMES_COUNT =
   sizeof(REGISTER_NAMES)/sizeof(REGISTER_NAMES[0]);
 
-typedef enum{
-  LOCATION_TYPE_NONE,
-  LOCATION_TYPE_REGISTER,
-  LOCATION_TYPE_STACK,
-  LOCATION_TYPE_PUSH,
-}Location_Type;
-
-typedef struct{
-  Location_Type type;
-  u64 value;
-}Location;
-
-#define LOCATION_RAX (Location) { .type = LOCATION_TYPE_REGISTER, .value = 4 }
-#define LOCATION_RCX (Location) { .type = LOCATION_TYPE_REGISTER, .value = 0 }
-#define LOCATION_PUSH (Location) { .type = LOCATION_TYPE_PUSH }
-
-char *FASTCALL_REGISTER_NAMES[] = {
-  "rcx", "rdx", "r8", "r9"
+u64 FASTCALL_REGISTERS[] = {
+  2, 5, 7, 8, 9
 };
 u64 FASTCALL_REGISTER_COUNT =
-  sizeof(FASTCALL_REGISTER_NAMES)/sizeof(FASTCALL_REGISTER_NAMES[0]);
+  sizeof(FASTCALL_REGISTERS)/sizeof(FASTCALL_REGISTERS[0]);
 
-typedef enum{
-  TYPE_NONE,
-  TYPE_U64,
-  TYPE_PTR,
-}Type;
+#define REGISTER(n) ((Value) { .type = VALUE_TYPE_REGISTER, .as.sval = (n) })
+#define RAX ((Value) { .type = VALUE_TYPE_REGISTER, .as.sval = (0) })
+#define RBX ((Value) { .type = VALUE_TYPE_REGISTER, .as.sval = (1) })
+#define RCX ((Value) { .type = VALUE_TYPE_REGISTER, .as.sval = (2) })
+#define RSP ((Value) { .type = VALUE_TYPE_REGISTER, .as.sval = (3) })
 
-u64 type_size(Type type) {
-  switch(type) {
+#define LITERAL(n) ((Value) { .type = VALUE_TYPE_LITERAL, .as.sval = (n) })
+#define WORD(s) ((Value) { .type = VALUE_TYPE_WORD, .as.stringval = (s) })
+#define RSP_OFF(n) ((Value) { .type = VALUE_TYPE_REGISTER_OFF, .as.sval = (3), .off = (n) })
 
-  case TYPE_U64:
-    return 8;
+typedef struct{
+  Value_Type type;
+  
+  union {
+    string stringval;
+    s64 sval;
+  }as;  
+  s64 off;
+}Value;
 
-  case TYPE_PTR:
-    return 8;
+typedef enum {
+  INSTR_TYPE_NONE = 0,
+  INSTR_TYPE_MOV,
+  INSTR_TYPE_SUB,
+  INSTR_TYPE_ADD,
+  INSTR_TYPE_CALL,
+}Instr_Type;
+
+typedef struct{
+  Instr_Type type;
+  Value lhs;
+  Value rhs;
+}Instr;
+
+#define MOV(l, r) ((Instr) { .type = INSTR_TYPE_MOV, .lhs = (l), .rhs = (r), })
+#define SUB(l, r) ((Instr) { .type = INSTR_TYPE_SUB, .lhs = (l), .rhs = (r), })
+#define ADD(l, r) ((Instr) { .type = INSTR_TYPE_ADD, .lhs = (l), .rhs = (r), })
+#define CALL(l) ((Instr) { .type = INSTR_TYPE_CALL, .lhs = (l) })
+
+void instr_append(Instr* instr, string_builder *sb) {
+  Value lhs = instr->lhs;
+  Value rhs = instr->rhs;
+
+  switch(instr->type) {
+
+  case INSTR_TYPE_MOV: {
+
+    if(lhs.type == VALUE_TYPE_REGISTER &&
+       rhs.type == VALUE_TYPE_LITERAL)  {
+      string_builder_appendf(sb, "        mov qword %s, %lld\n",
+			     REGISTER_NAMES[lhs.as.sval], rhs.as.sval);
+    } else if(lhs.type == VALUE_TYPE_REGISTER &&
+	       rhs.type == VALUE_TYPE_REGISTER) {
+      string_builder_appendf(sb, "        mov %s, %s\n",
+			     REGISTER_NAMES[lhs.as.sval], REGISTER_NAMES[rhs.as.sval]);
+    } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
+	      rhs.type == VALUE_TYPE_LITERAL) {
+      string_builder_appendf(sb, "        mov qword [%s + %lld], %lld\n",
+			     REGISTER_NAMES[lhs.as.sval],
+			     lhs.off,
+			     rhs.as.sval);
+    } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
+	      rhs.type == VALUE_TYPE_REGISTER) {
+      string_builder_appendf(sb, "        mov [%s + %lld], %s\n",
+			     REGISTER_NAMES[lhs.as.sval],
+			     lhs.off,
+			     REGISTER_NAMES[rhs.as.sval]);
+      
+    } else if(lhs.type == VALUE_TYPE_REGISTER &&
+	      rhs.type == VALUE_TYPE_REGISTER_OFF) {
+      string_builder_appendf(sb, "        mov %s, [%s + %lld]\n",
+			     REGISTER_NAMES[lhs.as.sval],
+			     REGISTER_NAMES[rhs.as.sval],
+			     rhs.off);
+    } else {
+      panic("Unimplemented value->type's"); 
+    }
     
-  default: {
-    panic("unimplemented type");
   } break;
+
+  case INSTR_TYPE_SUB: {
+
+    if(lhs.type == VALUE_TYPE_REGISTER &&
+       rhs.type == VALUE_TYPE_LITERAL)  {
+      string_builder_appendf(sb, "        sub %s, %lld\n",
+			     REGISTER_NAMES[lhs.as.sval], rhs.as.sval);
+    } else {
+      panic("Unimplemented value->type's");    	
+    }
+      
+  } break;
+
+  case INSTR_TYPE_ADD: {
+
+    if(lhs.type == VALUE_TYPE_REGISTER &&
+       rhs.type == VALUE_TYPE_LITERAL)  {
+      string_builder_appendf(sb, "        add %s, %lld\n",
+			     REGISTER_NAMES[lhs.as.sval], rhs.as.sval);
+    } else {
+      panic("Unimplemented value->type's");    	
+    }
+      
+  } break;
+
+  case INSTR_TYPE_CALL: {
+
+    if(lhs.type == VALUE_TYPE_WORD)  {
+      string_builder_appendf(sb, "        call "str_fmt"\n",
+			     str_arg(lhs.as.stringval));
+    } else {
+      panic("Unimplemented value->type");
+    }
+    
+  } break;
+        
+  default:
+    panic("Unimplemented instr->type");
   }
 }
 
-const char *type_cstr(Type type) {
-  switch(type) {
+typedef struct{
+  Instr *data;
+  u64 cap;
+  u64 len;
+}Instrs;
 
-  case TYPE_U64:
-    return "u64";
-
-  case TYPE_PTR:
-    return "void*";
-    
-  default: {
-    panic("unimplemented data_type");
-  } break;
+void instrs_append(Instrs *instrs, string_builder *sb) {
+  for(u64 i=0;i<instrs->len;i++) {
+    instr_append(&instrs->data[i], sb);
   }
 }
+
+#define FUNCCALL_ARGS_CAP 8
 
 typedef enum{
   EXPR_TYPE_NONE,
@@ -90,8 +191,6 @@ typedef enum{
   EXPR_TYPE_VARIABLE_PTR,
 }Expr_Type;
 
-#define FUNCCALL_ARGS_CAP 8
-
 typedef struct Expr Expr;
 
 typedef struct{
@@ -101,6 +200,22 @@ typedef struct{
 }Expr_Funccall;
 
 typedef struct Constant Constant;
+
+typedef enum{
+  CONSTANT_TYPE_NONE,
+  CONSTANT_TYPE_CSTR,
+  CONSTANT_TYPE_U64,
+}Constant_Type;
+
+struct Constant{
+
+  Constant_Type type;
+  union{
+    const char *cstrval;
+    u64 uval;
+  }as;
+  
+};
 
 struct Expr{
   Expr_Type type;
@@ -112,101 +227,25 @@ struct Expr{
   }as;
 };
 
-typedef struct{
-  Expr *data;
-  u64 len;
-  u64 cap;
-}Exprs;
-
-#define INITIAL_CAP 64
-
-Expr *exprs_append(Exprs *s) {
-  if(s->len < s->cap) {
-    return &s->data[s->len++];
-  }
-
-  if(s->cap == 0) {
-    s->cap = INITIAL_CAP;
-  } else {
-    s->cap = s->cap * 2;
-  }
-
-  s->data = realloc(s->data, s->cap * sizeof(Expr));
-  if(!s->data) {
-    fprintf(stderr, "ERROR: Failed to realloc\n");
-    exit(1);
-  }
-
-  return &s->data[s->len++];
-}
-
 typedef enum{
-  STMT_TYPE_NONE,
-  STMT_TYPE_DECLARATION,
-  STMT_TYPE_ASSIGNMENT,
-  STMT_TYPE_FUNCCALL,
-  STMT_TYPE_IF,
-}Stmt_Type;
+  TYPE_NONE,
+  TYPE_U64,
+  TYPE_U64_PTR,
+}Type;
 
-typedef struct{
-  string name;
-  Type type;
-}Stmt_Declaration;
+u64 type_size(Type type) {
+  switch(type) {
 
-typedef struct{
-  Expr *lhs;
-  Expr *rhs;
-}Stmt_Assignment;
+  case TYPE_U64:
+    return 8;
 
-typedef enum{
-  STMT_IF_TYPE_NONE,
-  STMT_IF_TYPE_EQUALS,
-  STMT_IF_TYPE_NOT_EQUALS,
-}Stmt_If_Type;
-
-typedef struct Stmts Stmts;
-
-typedef struct{
-  Stmt_If_Type type;
-  Expr *lhs;
-  Expr *rhs;
-  Stmts *body;
-}Stmt_If;
-
-typedef struct{
-  Stmt_Type type;
-  union {
-    Stmt_Declaration declaration;
-    Stmt_Assignment assignment;
-    Expr_Funccall funccall;
-    Stmt_If iff;
-  }as;
-}Stmt;
-
-struct Stmts{
-  Stmt *data;
-  u64 len;
-  u64 cap;
-};
-
-Stmt *stmts_append(Stmts *s) {
-  if(s->len < s->cap) {
-    return &s->data[s->len++];
+  case TYPE_U64_PTR:
+    return 8;
+    
+  default: {
+    panic("unimplemented type");
+  } break;
   }
-
-  if(s->cap == 0) {
-    s->cap = INITIAL_CAP;
-  } else {
-    s->cap = s->cap * 2;
-  }
-
-  s->data = realloc(s->data, s->cap * sizeof(Stmt));
-  if(!s->data) {
-    fprintf(stderr, "ERROR: Failed to realloc\n");
-    exit(1);
-  }
-
-  return &s->data[s->len++];
 }
 
 typedef struct{
@@ -220,26 +259,6 @@ typedef struct{
   u64 len;
   u64 cap;
 }Vars;
-
-Var *vars_append(Vars *s) {
-  if(s->len < s->cap) {
-    return &s->data[s->len++];
-  }
-
-  if(s->cap == 0) {
-    s->cap = INITIAL_CAP;
-  } else {
-    s->cap = s->cap * 2;
-  }
-
-  s->data = realloc(s->data, s->cap * sizeof(Var));
-  if(!s->data) {
-    fprintf(stderr, "ERROR: Failed to realloc\n");
-    exit(1);
-  }
-
-  return &s->data[s->len++];
-}
 
 Var *vars_find(Vars *vars, string name, Type type) {
 
@@ -261,667 +280,228 @@ Var *vars_find(Vars *vars, string name, Type type) {
   
 }
 
-typedef enum{
-  CONSTANT_TYPE_NONE,
-  CONSTANT_TYPE_STRING,
-  CONSTANT_TYPE_U64,
-}Constant_Type;
-
-struct Constant{
-
-  Constant_Type type;
-  union{
-    char *cstrval;
-    u64 uval;
-  }as;
+typedef struct{
+  Expr expr_pool[16];
+  u64 expr_pool_count;
   
-};
-
-typedef struct{
-  Constant *data;
-  u64 len;
-  u64 cap;
-}Constants;
-
-Constant *constants_append(Constants *s) {
-  if(s->len < s->cap) {
-    return &s->data[s->len++];
-  }
-
-  if(s->cap == 0) {
-    s->cap = INITIAL_CAP;
-  } else {
-    s->cap = s->cap * 2;
-  }
-
-  s->data = realloc(s->data, s->cap * sizeof(Constant));
-  if(!s->data) {
-    fprintf(stderr, "ERROR: Failed to realloc\n");
-    exit(1);
-  }
-
-  return &s->data[s->len++];
-}
-
-typedef struct{
-  Constants constants;
-  Stmts stmts;
   Vars vars;
-  Exprs exprs;
-  
+  Instrs instrs;
+
   u64 stack_ptr;
 }Program;
 
+Expr *program_expr_append(Program *p) {
+  if(p->expr_pool_count >= sizeof(p->expr_pool)/sizeof(p->expr_pool[0])) {
+    panic("expr_pool overflow");
+  }
+  return &p->expr_pool[p->expr_pool_count++];
+}
 
-void program_funccall_compile(Program *p, Expr_Funccall *funccall, string_builder *sb);
+Expr *program_expr_append_value(Program *p, s64 value) {
+  Expr *e = program_expr_append(p);
+  
+  e->type = EXPR_TYPE_VALUE;
+  e->as.sval = value;
 
-void program_expr_compile(Program *p, Expr *e, Location loc, string_builder *sb) {
+  return e;
+}
 
-  switch(e->type) {
+Expr *program_expr_append_variable(Program *p, string name) {
+  Expr *e = program_expr_append(p);
+  
+  e->type = EXPR_TYPE_VARIABLE;
+  e->as.stringval = name;
+  
+  return e;
+}
 
-  case EXPR_TYPE_VALUE: {
+#define program_expr_append_funccall(exprs, name, ...)			\
+  program_expr_append_funccall_impl((exprs), (name), __VA_ARGS__, NULL)
 
-    string_builder_appendc(sb, "        ;;     EXPR_VALUE\n");
-    string_builder_appendf(sb, "        ;;         value=%lld\n", e->as.sval);
+Expr *program_expr_append_funccall_impl(Program *p, string name, ...) {
+  
+  Expr_Funccall funccall;
+  funccall.name = name;
+  
+  va_list args;
+  va_start(args, name);
 
-    switch(loc.type) {
+  funccall.args_len = 0;
+  for(;;) {
 
-    case LOCATION_TYPE_STACK: {
-      string_builder_appendf(sb, "        mov qword [rsp + %llu], %lld\n",
-			     p->stack_ptr - loc.value, e->as.sval);
-    } break;
-
-    case LOCATION_TYPE_REGISTER: {
-      string_builder_appendf(sb, "        mov qword %s, %lld\n",
-			     REGISTER_NAMES[loc.value], e->as.sval);
-    } break;
-
-    case LOCATION_TYPE_PUSH: {
-      string_builder_appendf(sb, "        push qword %lld\n", e->as.sval);
-      p->stack_ptr += 8;
-    } break;
-      
-    default: {
-      panic("unimplemented location_type");
-    } break;
-    }
-    
-  } break;
-
-  case EXPR_TYPE_VARIABLE: {
-
-    Var *var = vars_find(&p->vars, e->as.stringval, TYPE_NONE);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(e->as.stringval));
-    }
-    
-    string_builder_appendc(sb, "        ;;     EXPR_VARIABLE\n");
-    string_builder_appendf(sb, "        ;;         name=\""str_fmt"\"\n", str_arg(e->as.stringval));
-
-    switch(loc.type) {
-
-    case LOCATION_TYPE_REGISTER: {
-      string_builder_appendf(sb, "        mov %s, [rsp + %llu]\n",
-			     REGISTER_NAMES[loc.value], p->stack_ptr - var->off);
-    } break;
-
-    case LOCATION_TYPE_PUSH: {
-      string_builder_appendf(sb, "        push qword [rsp + %llu]\n",
-			     p->stack_ptr - var->off);
-      p->stack_ptr += 8;
-    } break;
-      
-    default: {
-      panic("unimplemented location_type");
-    } break;
-    }
-    
-  } break;
-
-  case EXPR_TYPE_FUNCCALL: {
-
-    string_builder_appendc(sb, "        ;;     EXPR_FUNCCALL\n");
-
-    program_funccall_compile(p, &e->as.funccall, sb);
-
-    switch(loc.type) {
-
-    case LOCATION_TYPE_REGISTER: {
-
-      // Result of funccall already is in RAX,
-      // no need for any instructions
-      if(loc.value == LOCATION_RAX.value) {
-	return;
-      }
-      
-      string_builder_appendf(sb, "        mov %s, rax\n",
-			     REGISTER_NAMES[loc.value]);
-    } break;
-
-    case LOCATION_TYPE_STACK: {
-      string_builder_appendf(sb, "        mov [rsp + %llu], rax\n",
-			     p->stack_ptr - loc.value);
-    } break;
-
-    case LOCATION_TYPE_PUSH: {
-      string_builder_appendf(sb, "        push rax\n");
-      p->stack_ptr += 8;
-    } break;
-      
-    default: {
-      panic("unimplemented location_type");
-    } break;
-    }
-    
-  } break;
-
-  case EXPR_TYPE_CONSTANT: {
-
-    string_builder_appendc(sb, "        ;;     EXPR_CONSTANT\n");
-
-    switch(loc.type) {
-
-    case LOCATION_TYPE_REGISTER: {
-
-      Constant *c = e->as.constant;
-      string_builder_appendf(sb, "        mov %s, constant_%p\n",
-			     REGISTER_NAMES[loc.value], (void *) c);
-      
-    } break;
-      
-    default: {
-      panic("unimplemented location_type");
-    } break;
-    }
-    
-  } break;
-
-  case EXPR_TYPE_VARIABLE_PTR: {
-
-    string_builder_appendc(sb, "        ;;     EXPR_VARIABLE_PTR\n");
-
-    Var *var = vars_find(&p->vars, e->as.stringval, TYPE_NONE);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(e->as.stringval));
+    Expr *arg = va_arg(args, Expr *);
+    if(arg == NULL) {
+      break;
     }
 
-    switch(loc.type) {
-
-    case LOCATION_TYPE_REGISTER: {
-      string_builder_appendf(sb, "        lea %s, [rsp + %llu]\n",
-			     REGISTER_NAMES[loc.value], p->stack_ptr - var->off);
-    } break;
-
-    case LOCATION_TYPE_STACK: {
-      string_builder_appendf(sb, "        lea rax, [rsp + %llu]\n",
-			     p->stack_ptr - var->off);
-      string_builder_appendf(sb, "        mov [rsp + %llu], rax\n",
-			     p->stack_ptr - loc.value);
-    } break;
-      
-    default: {
-      panic("unimplemented location_type");
-    } break;
+    if(funccall.args_len >= sizeof(funccall.args)/sizeof(funccall.args[0])) {
+      panic("argument overflow");
     }
     
-  } break;
-    
-  default: {
-    panic("unimplemented expr_type");
-  } break;
+    funccall.args[funccall.args_len++] = arg;
   }
   
-}
+  va_end(args);
 
-void program_funccall_compile(Program *p, Expr_Funccall *funccall, string_builder *sb) {
-  u64 stack_ptr_before = p->stack_ptr;
+  Expr *e = program_expr_append(p);
+  e->type = EXPR_TYPE_FUNCCALL;
+  e->as.funccall = funccall;
   
-  for(u64 i=0;i<funccall->args_len;i++) {
-    Location loc;
-    if(i < FASTCALL_REGISTER_COUNT) {
-      // "value = i" is only valid, since REGISTER_NAMES 
-      // starts with the FASTCALL_REGISTER_NAMES
-      loc = (Location) { .type = LOCATION_TYPE_REGISTER, .value = i };
-    } else {
-      loc = (Location) { .type = LOCATION_TYPE_PUSH };
-    }
-      
-    program_expr_compile(p, funccall->args[i], loc, sb);
-  }
-
-  u64 shadow_space = 32;
-  u64 alignment = (p->stack_ptr + shadow_space) % 16;
-  if(alignment != 0) {
-    shadow_space += 16 - alignment;
-  }
-  string_builder_appendf(sb, "        sub rsp, %llu\n", shadow_space);
-  p->stack_ptr += shadow_space;
-  string_builder_appendf(sb, "        call "str_fmt"\n", str_arg(funccall->name));  
-
-  string_builder_appendf(sb, "        add rsp, %llu\n", p->stack_ptr - stack_ptr_before);
-  p->stack_ptr = stack_ptr_before;
-  
+  return e;
 }
 
-Location program_expr_location(Program *p, Expr *e) {
-  switch(e->type) {
+void program_append(Program *p, string_builder *sb) {
 
-  case EXPR_TYPE_VARIABLE: {
-    
-    Var *var = vars_find(&p->vars, e->as.stringval, TYPE_NONE);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(e->as.stringval));
-    }
-      
-    return (Location) { .type = LOCATION_TYPE_STACK, .value = var->off };
-    
-  } break;
-    
-  default: {
-    panic("unimplemented expr_type");
-  } break;
-  }
-}
-
-void program_stmt_compile(Program *p, Stmt *s, string_builder *sb) {
-
-  switch(s->type) {
-
-  case STMT_TYPE_DECLARATION: {
-
-    Stmt_Declaration *declaration = &s->as.declaration;
-    if(vars_find(&p->vars, declaration->name, TYPE_NONE)) {
-      panic("variable already declared");
-    }
-
-    u64 size = type_size(declaration->type);
-
-    Var *var = vars_append(&p->vars);
-    var->name = declaration->name;
-    var->type = declaration->type;
-    var->off  = p->stack_ptr + size;
-
-    string_builder_appendc(sb, "        ;; STMT_DECLARATION\n");
-    string_builder_appendf(sb, "        ;;     name=\""str_fmt"\"\n", str_arg(declaration->name));
-    string_builder_appendf(sb, "        ;;     type=%s\n", type_cstr(declaration->type));
-        
-    string_builder_appendf(sb, "        sub rsp, %llu\n", size);
-    p->stack_ptr += size;
-    
-  } break;
-
-  case STMT_TYPE_ASSIGNMENT: {
-
-    string_builder_appendc(sb, "        ;; STMT_ASSIGN\n");
-
-    Stmt_Assignment *assignment = &s->as.assignment;
-    Expr *lhs = assignment->lhs;
-    Expr *rhs = assignment->rhs;
-      
-    Location loc = program_expr_location(p, lhs);
-    program_expr_compile(p, rhs, loc, sb);
-    
-  } break;
-
-  case STMT_TYPE_FUNCCALL: {
-
-    string_builder_appendc(sb, "        ;; STMT_FUNCCALL\n");
-
-    Expr_Funccall *funccall = &s->as.funccall;
-    program_funccall_compile(p, funccall, sb);    
-    
-  } break;
-
-  case STMT_TYPE_IF: {
-
-    string_builder_appendc(sb, "        ;; STMT_IF\n");
-
-    Stmt_If *iff = &s->as.iff;
-    Expr *lhs = iff->lhs;
-    Expr *rhs = iff->rhs;
-    
-    // Do not push, if you dont need to
-    switch(rhs->type) {
-
-    case EXPR_TYPE_VALUE: 
-    case EXPR_TYPE_VARIABLE: {
-      program_expr_compile(p, lhs, LOCATION_RAX, sb);
-      program_expr_compile(p, rhs, LOCATION_RCX, sb);
-    } break;
-
-    case EXPR_TYPE_FUNCCALL: {
-      program_expr_compile(p, lhs, LOCATION_PUSH, sb);
-      program_expr_compile(p, rhs, LOCATION_RCX, sb);
-      string_builder_appendc(sb, "        pop rax\n");
-      p->stack_ptr -= 8;
-    } break;
-      
-    default: {
-      panic("unimplemented expr_type");
-    } break;
-    }
-
-    string_builder_appendc(sb, "        cmp rax, rcx\n");
-    
-    switch(iff->type) {
-    case STMT_IF_TYPE_EQUALS: {
-      string_builder_appendf(sb, "        jne .label_%p\n", (void *) s);
-    } break;
-
-    case STMT_IF_TYPE_NOT_EQUALS: {
-      string_builder_appendf(sb, "        je .label_%p\n", (void *) s);
-    } break;
-      
-    default: {
-      panic("unimplemented if_type");
-    } break;
-    }
-
-    u64 vars_len = p->vars.len;
-    u64 stack_ptr_before = p->stack_ptr;
-
-    for(u64 i=0;i<iff->body->len;i++) {
-      program_stmt_compile(p, &iff->body->data[i], sb);
-    }
-
-    p->vars.len = vars_len;
-    if(stack_ptr_before != p->stack_ptr) {
-      string_builder_append(sb, "        add rsp, %llu\n", p->stack_ptr - stack_ptr_before);
-      p->stack_ptr = stack_ptr_before;
-    }
-
-    string_builder_appendf(sb, ".label_%p:\n", (void *) s);
-    
-    
-  } break;
-    
-  default: {
-    panic("unimplemented stmt_type");
-  } break;
-  }
-
-}
-
-void program_constant_compile(Program *p, Constant *c, string_builder *sb) {
-
-  (void) p;
-  
-  switch(c->type) {
-
-  case CONSTANT_TYPE_STRING: {
-
-    string_builder_appendf(sb, "        ;; CONSTANT_STRING\n");
-    string s = string_from_cstr(c->as.cstrval);
-    string copy = s;
-    string line;
-    string_builder_appendf(sb, "        ;;     value=\"");
-    int i = 0;
-    while(string_chop_by(&s, "\n", &line)) {
-      if(i++ == 0) {
-	string_builder_appendf(sb, str_fmt"\n", str_arg(line));
-      } else {
-	string_builder_appendf(sb, "        ;;            "str_fmt"\n", str_arg(line));
-      }
-    }
-    s = copy;
-    sb->len = sb->len - 1;
-    string_builder_appendf(sb, "\"\n");
-    
-    
-    string_builder_appendf(sb, "constant_%p: db ", (void *) c);
-    for(u64 j=0;j<s.len;j++) {
-      string_builder_appendf(sb, "%u", s.data[j]);
-      if(j != s.len - 1) {
-        string_builder_appendc(sb, ",");
-      }
-    }
-
-    string_builder_appendf(sb, "\n");
-    
-  } break;
-
-  case CONSTANT_TYPE_U64: {
-
-    string_builder_appendf(sb, "        ;; CONSTANT_U64\n");
-    string_builder_appendf(sb, "        ;;     value=%llu\n", c->as.uval);
-    
-    
-    string_builder_appendf(sb, "%%define constant_%p %llu\n",
-			   (void *) c, c->as.uval);
-    
-  } break;
-    
-  default: {
-    panic("unimplemented constant_type");
-  } break;
-  }
-}
-
-void program_compile(Program *p, string_builder *sb) {
-
-  // PREFIX
-  string_builder_appendc(sb,
+  string_builder_appendf(sb,
 			 "        global main\n"
-			 "        extern ExitProcess\n"
 			 "        extern GetStdHandle\n"
-			 "        extern WriteFile\n");
-
-  // Constants
-  if(p->constants.len > 0) {
-
-    string_builder_appendc(sb, "\n");
-    string_builder_appendc(sb, "        section .data\n");    
-
-    for(u64 i=0;i<p->constants.len;i++) {
-      program_constant_compile(p, &p->constants.data[i], sb);
-    }
-
-    string_builder_appendc(sb, "\n");
-  }
-
-  // Stmts
-  string_builder_appendc(sb,
-			 "        section .text:\n"
+			 "        extern ExitProcess\n"
+			 "        section .text\n"
 			 "main:\n");
   
-  for(u64 i=0;i<p->stmts.len;i++) {
-    program_stmt_compile(p, &p->stmts.data[i], sb);
-  }
+  instrs_append(&p->instrs, sb);
 
-  string_builder_appendc(sb, "\n");
-
-  // SUFFIX
-  if(p->stack_ptr != 0) {
-    string_builder_appendf(sb,
-			   "        add rsp, %llu\n", p->stack_ptr);
-  }
-  
-  string_builder_appendc(sb,
+  string_builder_appendf(sb,
 			 "        mov rcx, 0\n"
 			 "        sub rsp, 40\n"
 			 "        call ExitProcess\n");
 }
 
+void program_compile_stmt_declaration(Program *p,
+				      string name,
+				      Type type) {
+  if(vars_find(&p->vars, name, TYPE_NONE)) {
+    panic("variable already declared");
+  }
 
-void stmts_append_declaration(Stmts *s, string name, Type type) {
+  u64 size = type_size(type);
 
-  Stmt *stmt = stmts_append(s);
-  stmt->type = STMT_TYPE_DECLARATION;
+  Var var;
+  var.name = name;
+  var.type = type;
+  var.off  = p->stack_ptr + size;
 
-  Stmt_Declaration *declaration = &stmt->as.declaration;
-  declaration->name = name;
-  declaration->type = type; 
+  da_append(&p->instrs, SUB(RSP, LITERAL(size)));
+  p->stack_ptr += size;
+  
+  da_append(&p->vars, var);
+
+  
+  p->expr_pool_count = 0;
 }
 
-void stmts_append_assignment(Stmts *s, Expr *lhs, Expr *rhs) {
-  
-  Stmt *stmt = stmts_append(s);
-  stmt->type = STMT_TYPE_ASSIGNMENT;
+Value program_expr_location(Program *p, Expr *e) {
+  switch(e->type) {
 
-  Stmt_Assignment *assignment = &stmt->as.assignment;
-  assignment->lhs = lhs;
-  assignment->rhs = rhs;  
+  case EXPR_TYPE_VARIABLE: {
+    
+    Var *var = vars_find(&p->vars, e->as.stringval, TYPE_NONE);
+    if(!var) {
+      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(e->as.stringval));
+    }
+
+    return RSP_OFF(var->off - type_size(var->type));
+    
+  } break;
+    
+  default:
+    panic("unimplemented expr_type: %d", e->type);
+
+  }
 }
 
-void stmts_append_funccall(Stmts *s, string name, Expr **args, u64 args_len) {
+void program_compile_funccall(Program *p, Expr_Funccall *funccall);
 
-  Stmt *stmt = stmts_append(s);
-  stmt->type = STMT_TYPE_FUNCCALL;
+void program_expr_compile(Program *p,
+			  Expr *e,
+			  Value location) {
+
+  switch(e->type) {
+
+  case EXPR_TYPE_VALUE: {
+    
+    da_append(&p->instrs, MOV(location, LITERAL(e->as.sval)));
+    
+  } break;
+
+  case EXPR_TYPE_FUNCCALL: {
+
+    program_compile_funccall(p, &e->as.funccall);
+    da_append(&p->instrs, MOV(location, RAX));
+    
+  } break;
+
+  default:
+    panic("Unimplemented expr->type");
+    
+  }
   
-  Expr_Funccall *funccall = &stmt->as.funccall;
-  memcpy(funccall->args, args, args_len * sizeof(Expr*));
-  funccall->args_len = args_len;
-  funccall->name = name;
 }
 
-void stmts_append_if(Stmts *s,
-		     Expr *lhs,
-		     Stmt_If_Type operand,
-		     Expr *rhs,
-		     Stmts *body) {
-  
-  Stmt *stmt = stmts_append(s);
-  stmt->type = STMT_TYPE_IF;
+void program_compile_funccall(Program *p, Expr_Funccall *funccall) {
 
-  Stmt_If *stmt_if = &stmt->as.iff;
-  stmt_if->rhs = rhs;
-  stmt_if->type = operand;
-  stmt_if->lhs = lhs;
-  stmt_if->body = body;
+  u64 n = funccall->args_len * 8;
+  if(n < 32) {
+    n = 32;
+  }
+  p->stack_ptr += n;
+  u64 alignment = p->stack_ptr % 16;
+  if(alignment != 0) {
+    p->stack_ptr += alignment;
+    n += alignment;
+  }
+  da_append(&p->instrs, SUB(RSP, LITERAL(n)));  
+  
+  for(u64 i=0;i<funccall->args_len;i++) {
+    Expr *e = funccall->args[i];
+    program_expr_compile(p, e, RSP_OFF(i * 8));
+  }    
+  for(u64 i=0;i<funccall->args_len;i++) {
+    da_append(&p->instrs, MOV(REGISTER(FASTCALL_REGISTERS[i]), RSP_OFF(i * 8)));
+  }
+
+  da_append(&p->instrs, CALL(WORD(funccall->name)));
+  
+  da_append(&p->instrs, ADD(RSP, LITERAL(n)));
+  p->stack_ptr -= n;
+
+  
 }
 
-///////////////////////////////////////////////////////////
-
-Program hello_world_program() {
-
-  Program program = {0};
-
-  Constant *hello_world_data = constants_append(&program.constants);
-  hello_world_data->type = CONSTANT_TYPE_STRING;
-  hello_world_data->as.cstrval = "Hello World!\n";
-
-  Constant *hello_world_len = constants_append(&program.constants);
-  hello_world_len->type = CONSTANT_TYPE_U64;
-  hello_world_len->as.uval = 13;
-
-  // handle : u64*
-  string handle;
-  string_copy_cstr("handle", &handle);
-  stmts_append_declaration(&program.stmts,
-			   handle,
-			   TYPE_PTR);
-
-  // handle = GetStdHandle(-11);
-  Expr *expr_handle = exprs_append(&program.exprs);
-  expr_handle->type = EXPR_TYPE_VARIABLE;
-  expr_handle->as.stringval = handle;
-
-  Expr *expr_neg_11 = exprs_append(&program.exprs);
-  expr_neg_11->type = EXPR_TYPE_VALUE;
-  expr_neg_11->as.sval = -11;
+void program_compile_assignment(Program *p,
+				Expr *lhs,
+				Expr *rhs) {
   
-  Expr *expr_GetStdHandle = exprs_append(&program.exprs);
-  expr_GetStdHandle->type = EXPR_TYPE_FUNCCALL;
-  string_copy_cstr("GetStdHandle", &expr_GetStdHandle->as.funccall.name);
-  expr_GetStdHandle->as.funccall.args_len = 1;
-  expr_GetStdHandle->as.funccall.args[0] = expr_neg_11;
-  
-  stmts_append_assignment(&program.stmts,
-			  expr_handle,
-			  expr_GetStdHandle);
+  program_expr_compile(p, rhs, program_expr_location(p, lhs));
 
-  // if(handle == -1) {
-  //   ExitProcess(1);
-  // }
-  static Stmts if_body = {0};
-  Expr *expr_1 = exprs_append(&program.exprs);
-  expr_1->type = EXPR_TYPE_VALUE;
-  expr_1->as.sval = 1;
-
-  string exit_process;
-  string_copy_cstr("ExitProcess", &exit_process);
-  stmts_append_funccall(&if_body,
-		        exit_process,
-			&expr_1,
-			1);
-  Expr *expr_neg_1 = exprs_append(&program.exprs);
-  expr_neg_1->type = EXPR_TYPE_VALUE;
-  expr_neg_1->as.sval = -1;
-
-  stmts_append_if(&program.stmts,
-		  expr_handle,
-		  STMT_IF_TYPE_EQUALS,
-		  expr_neg_1,
-		  &if_body);
-
-  // written : u64
-  
-  stmts_append_declaration(&program.stmts,
-			   string_from_cstr("written"),
-			   TYPE_U64);
-
-  // if(WriteFile(handle, hello_world_data, hello_world_len, &written, NULL) == 0) {
-  //   ExitProcess(1);
-  // }  
-  Expr *expr_hello_world_data = exprs_append(&program.exprs);
-  expr_hello_world_data->type = EXPR_TYPE_CONSTANT;
-  expr_hello_world_data->as.constant = hello_world_data;
-
-  Expr *expr_hello_world_len = exprs_append(&program.exprs);
-  expr_hello_world_len->type = EXPR_TYPE_CONSTANT;
-  expr_hello_world_len->as.constant = hello_world_len;
-
-  Expr *expr_ptr_to_written = exprs_append(&program.exprs);
-  expr_ptr_to_written->type = EXPR_TYPE_VARIABLE_PTR;
-  string_copy_cstr("written", &expr_ptr_to_written->as.stringval);
-
-  Expr *expr_0 = exprs_append(&program.exprs);
-  expr_0->type = EXPR_TYPE_VALUE;
-  expr_0->as.sval = 0;
-
-  Expr *exprs[8];
-  u64 exprs_len = 0;
-  exprs[exprs_len++] = expr_handle;
-  exprs[exprs_len++] = expr_hello_world_data;
-  exprs[exprs_len++] = expr_hello_world_len;
-  exprs[exprs_len++] = expr_ptr_to_written;
-  exprs[exprs_len++] = expr_0;
-  
-  Expr *expr_WriteFile = exprs_append(&program.exprs);
-  expr_WriteFile->type = EXPR_TYPE_FUNCCALL;
-  string_copy_cstr("WriteFile", &expr_WriteFile->as.funccall.name);
-  memcpy(&expr_WriteFile->as.funccall.args, exprs, exprs_len * sizeof(Expr *));
-  expr_WriteFile->as.funccall.args_len = exprs_len;
-
-  stmts_append_if(&program.stmts,
-		  expr_WriteFile,
-		  STMT_IF_TYPE_EQUALS,
-		  expr_0,
-		  &if_body);
-
-  return program;
+  p->expr_pool_count = 0;
 }
-
-// TODO:
-//     derefence ptr
-//     structures
-//     allocate arrays on stack
 
 int main() {
 
+  Program program = {0};
+
+  // handle : u64*;
+  program_compile_stmt_declaration(&program,
+				   string_from_cstr("handle"),
+				   TYPE_U64_PTR);
+  
+  // handle = GetStdHandle(-11);
+  program_compile_assignment(&program,
+			     program_expr_append_variable(&program,
+							  string_from_cstr("handle")),
+			     program_expr_append_funccall(&program,
+							  string_from_cstr("GetStdHandle"),
+							  program_expr_append_value(&program,
+										    -11)));
   string_builder sb = {0};
+  program_append(&program, &sb);
+  printf("%.*s", (int) sb.len, sb.data);
 
-  
-  Program program = hello_world_program();
-  program_compile(&program, &sb);
-
-  printf("\n===================================================\n");
-  printf("\n%.*s\n", (int) sb.len, sb.data);
-  printf("\n===================================================\n");
-  
-  if(!io_write_file(FILE_PATH, (u8 *) sb.data, sb.len)) {
+  if(!io_write_file("main.asm", (u8 *) sb.data, sb.len)) {
     return 1;
   }
-  
+
+
   return 0;
 }
