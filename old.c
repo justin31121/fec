@@ -2,6 +2,7 @@
 #include <assert.h>
 
 // https://en.wikibooks.org/wiki/X86_Assembly/X86_Architecture
+// https://en.wikipedia.org/wiki/X86_instruction_listings
 
 #define STRING_IMPLEMENTATION
 #include "_string.h"
@@ -764,8 +765,7 @@ void program_compile(Program *p, string_builder *sb) {
 			 "        extern GetFileSize\n"
 			 "        extern GetProcessHeap\n"
 			 "        extern HeapAlloc\n"
-			 "        extern ReadFile\n"
-			 "        extern foo\n");
+			 "        extern ReadFile\n");
 
   // Stmts
   string_builder_appendc(sb,
@@ -1065,24 +1065,16 @@ Program slurp_file_program() {
   return program;
 }
 
-// TODO:
-//     derefence ptr
-//     structures
-//     allocate arrays on stack
-//     arithmetic
-//     foreign functions
-
-//     create stream of instructions and remove unnecassary
-
 int main() {
 
-  string_builder sb = {0};
-    
-  Program program = {0};
+ string_builder sb = {0};
 
-  stmts_append_funccall(&program.stmts,
-			string_from_cstr("ExitProcess"),
-			exprs_append_funccall(&program.exprs, string_from_cstr("foo")));
+ Program program = slurp_file_program();
+  /* Program program = {0}; */
+
+  /* stmts_append_funccall(&program.stmts, */
+  /* 			string_from_cstr("ExitProcess"), */
+  /* 			exprs_append_funccall(&program.exprs, string_from_cstr("foo"))); */
   
   program_compile(&program, &sb);
 
