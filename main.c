@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <limits.h>
 #include <assert.h>
 
 // https://en.wikibooks.org/wiki/X86_Assembly/X86_Architecture
@@ -39,8 +40,25 @@ typedef enum{
   VALUE_TYPE_CONSTANT,
 }Value_Type;
 
-char *REGISTER_NAMES[] = {
-  "rax", "rbx", "rcx", "rsp", "rbp", "rdi", "rsi", "rdx", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
+
+
+char *REGISTER_NAMES[][4] = {
+  { "rax", "eax", "ax", "al" },
+  { "rbx", "ebx", "bx", "bl" },
+  { "rcx", "ecx", "cx", "cl" },
+  { "rsp", "esp", "sp", "spl" },
+  { "rbp", "ebp", "bp", "bpl" },
+  { "rdi", "edi", "di", "dil" },
+  { "rsi", "esi", "si", "sil" },
+  { "rdx", "edx", "dx", "dl" },
+  { "r8", "r8d", "r8w", "r8b" },
+  { "r9", "r9d", "r9w", "r9b" },
+  { "r10", "r10d", "r10w", "r10b" },
+  { "r11", "r11d", "r11w", "r11b" },
+  { "r12", "r12d", "r12w", "r12b" },
+  { "r13", "r13d", "r13w", "r13b" },
+  { "r14", "r14d", "r14w", "r14b" },
+  { "r15", "r15d", "r15w", "r15b" },
 };
 u64 REGISTER_NAMES_COUNT =
   sizeof(REGISTER_NAMES)/sizeof(REGISTER_NAMES[0]);
@@ -74,6 +92,42 @@ typedef struct{
 }Value;
 
 typedef enum {
+  SIZE_BYTE = 0,   //  8 bits 1 byte(s)
+  SIZE_WORD,   // 16 bits 2 bytes
+  SIZE_DWORD,  // 32 bits 4 bytes
+  SIZE_QWORD,  // 64 bits 8 bytes
+  COUNT_SIZES,
+}Size;
+
+u64 size_in_bytes(Size size) {
+  switch(size) {
+  case SIZE_BYTE:
+    return 1;
+  case SIZE_WORD:
+    return 2;
+  case SIZE_DWORD:
+    return 4;
+  case SIZE_QWORD:
+    return 8;
+  }
+
+  panic("unimplemented size_type");
+}
+
+// TODO: i am not sure, if this is right
+Size size_of_s64(s64 val) {
+  if(val < CHAR_MAX) {
+    return SIZE_BYTE;
+  } else if(val < SHRT_MAX) {
+    return SIZE_WORD;
+  } else if(val < INT_MAX) {
+    return SIZE_DWORD;
+  } else {
+    return SIZE_QWORD;
+  }  
+}
+
+typedef enum {
   INSTR_TYPE_NONE = 0,
   INSTR_TYPE_MOV,
   INSTR_TYPE_SUB,
@@ -94,9 +148,10 @@ typedef struct{
   Instr_Type type;
   Value lhs;
   Value rhs;
+  Size size;
 }Instr;
 
-#define MOV(l, r) ((Instr) { .type = INSTR_TYPE_MOV, .lhs = (l), .rhs = (r), })
+#define MOV(l, r, s) ((Instr) { .type = INSTR_TYPE_MOV, .lhs = (l), .rhs = (r), .size = (s)})
 #define LEA(l, r) ((Instr) { .type = INSTR_TYPE_LEA, .lhs = (l), .rhs = (r), })
 #define SUB(l, r) ((Instr) { .type = INSTR_TYPE_SUB, .lhs = (l), .rhs = (r), })
 #define ADD(l, r) ((Instr) { .type = INSTR_TYPE_ADD, .lhs = (l), .rhs = (r), })
@@ -118,47 +173,120 @@ void instr_append(Instr* instr, string_builder *sb) {
 
   case INSTR_TYPE_MOV: {
 
-    if(lhs.type == VALUE_TYPE_REGISTER &&
-       rhs.type == VALUE_TYPE_LITERAL)  {
-      string_builder_appendf(sb, "        mov qword %s, %lld\n",
-			     REGISTER_NAMES[lhs.as.sval], rhs.as.sval);
-    } else if(lhs.type == VALUE_TYPE_REGISTER &&
-	      rhs.type == VALUE_TYPE_REGISTER) {
-      string_builder_appendf(sb, "        mov %s, %s\n",
-			     REGISTER_NAMES[lhs.as.sval], REGISTER_NAMES[rhs.as.sval]);
-    } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
-	      rhs.type == VALUE_TYPE_LITERAL) {
-      string_builder_appendf(sb, "        mov qword [%s + %lld], %lld\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     lhs.off,
-			     rhs.as.sval);
-    } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
-	      rhs.type == VALUE_TYPE_REGISTER) {
-      string_builder_appendf(sb, "        mov [%s + %lld], %s\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     lhs.off,
-			     REGISTER_NAMES[rhs.as.sval]);
-      
-    } else if(lhs.type == VALUE_TYPE_REGISTER &&
-	      rhs.type == VALUE_TYPE_REGISTER_OFF) {
-      string_builder_appendf(sb, "        mov %s, [%s + %lld]\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     REGISTER_NAMES[rhs.as.sval],
-			     rhs.off);
-    } else if(lhs.type == VALUE_TYPE_REGISTER &&
-	      rhs.type == VALUE_TYPE_CONSTANT) {
-      string_builder_appendf(sb, "        mov %s, constant%lld\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     rhs.as.sval);
-    } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
-	      rhs.type == VALUE_TYPE_CONSTANT) {
-      string_builder_appendf(sb, "        mov qword [%s + %lld], constant%lld\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     lhs.off,
-			     rhs.as.sval);
-    } else {
-      panic("Unimplemented value->type's");
+    Size s = instr->size;
+    if(s < SIZE_BYTE || COUNT_SIZES <= s) {
+      panic("Invalid size: %d", s);
     }
+    // TODO: yooooooooooooooooooooooo
+    s = 3 - s;
+
+    switch(lhs.type) {
+
+    case VALUE_TYPE_REGISTER: {
+
+      switch(rhs.type) {
+
+      case VALUE_TYPE_LITERAL: {
+	string_builder_appendf(sb, "        mov %s, %lld\n",
+			       REGISTER_NAMES[lhs.as.sval][s],
+			       rhs.as.sval);
+      } break;
+
+      case VALUE_TYPE_REGISTER: {
+	string_builder_appendf(sb, "        mov %s, %s\n",
+			       REGISTER_NAMES[lhs.as.sval][s],
+			       REGISTER_NAMES[rhs.as.sval][s]);
+      } break;
+
+      case VALUE_TYPE_REGISTER_OFF: {
+	string_builder_appendf(sb, "        mov %s, [%s + %lld]\n",
+			       REGISTER_NAMES[lhs.as.sval][s],
+			       REGISTER_NAMES[rhs.as.sval][0], rhs.off);
+      } break;
+
+      case VALUE_TYPE_CONSTANT: {
+	string_builder_appendf(sb, "        mov %s, constant%lld\n",
+			       REGISTER_NAMES[lhs.as.sval][s],
+			       rhs.as.sval);
+      } break;
+	
+      default:
+	panic("unimplemented value.type (rhs)");
+      }
+      
+    } break;
+
+    case VALUE_TYPE_REGISTER_OFF: {
+
+      switch(rhs.type) {
+
+      case VALUE_TYPE_LITERAL: {
+	string_builder_appendf(sb, "        mov [%s + %lld], %lld\n",
+			       REGISTER_NAMES[lhs.as.sval][0], lhs.off,
+			       rhs.as.sval);
+      } break;
+
+      case VALUE_TYPE_REGISTER: {
+        string_builder_appendf(sb, "        mov [%s + %lld], %s\n",
+			       REGISTER_NAMES[lhs.as.sval][0], lhs.off,
+			       REGISTER_NAMES[rhs.as.sval][s]);
+      } break;
+	
+      default:
+	panic("unimplemented value.type (rhs)");
+      }
+      
+    } break;
+
+
+    default:
+      panic("unimplemented value.type (lhs)");
+      
+    }
+
+    /*
+      if(lhs.type == VALUE_TYPE_REGISTER &&
+      rhs.type == VALUE_TYPE_LITERAL)  {
+      string_builder_appendf(sb, "        mov qword %s, %lld\n",
+      REGISTER_NAMES[lhs.as.sval][0], rhs.as.sval);
+      } else if(lhs.type == VALUE_TYPE_REGISTER &&
+      rhs.type == VALUE_TYPE_REGISTER) {
+      string_builder_appendf(sb, "        mov %s, %s\n",
+      REGISTER_NAMES[lhs.as.sval][0], REGISTER_NAMES[rhs.as.sval][0]);
+      } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
+      rhs.type == VALUE_TYPE_LITERAL) {
+      string_builder_appendf(sb, "        mov qword [%s + %lld], %lld\n",
+      REGISTER_NAMES[lhs.as.sval][0],
+      lhs.off,
+      rhs.as.sval);
+      } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
+      rhs.type == VALUE_TYPE_REGISTER) {
+      string_builder_appendf(sb, "        mov [%s + %lld], %s\n",
+      REGISTER_NAMES[lhs.as.sval][0],
+      lhs.off,
+      REGISTER_NAMES[rhs.as.sval][0]);
+      
+      } else if(lhs.type == VALUE_TYPE_REGISTER &&
+      rhs.type == VALUE_TYPE_REGISTER_OFF) {
+      string_builder_appendf(sb, "        mov %s, [%s + %lld]\n",
+      REGISTER_NAMES[lhs.as.sval][0],
+      REGISTER_NAMES[rhs.as.sval][0],
+      rhs.off);
+      } else if(lhs.type == VALUE_TYPE_REGISTER &&
+      rhs.type == VALUE_TYPE_CONSTANT) {
+      string_builder_appendf(sb, "        mov %s, constant%lld\n",
+      REGISTER_NAMES[lhs.as.sval][0],
+      rhs.as.sval);
+      } else if(lhs.type == VALUE_TYPE_REGISTER_OFF &&
+      rhs.type == VALUE_TYPE_CONSTANT) {
+      string_builder_appendf(sb, "        mov qword [%s + %lld], constant%lld\n",
+      REGISTER_NAMES[lhs.as.sval][0],
+      lhs.off,
+      rhs.as.sval);
+      } else {
+      panic("Unimplemented value->type's");
+      }
+    */
     
   } break;
 
@@ -167,12 +295,12 @@ void instr_append(Instr* instr, string_builder *sb) {
     if(lhs.type == VALUE_TYPE_REGISTER &&
        rhs.type == VALUE_TYPE_LITERAL)  {
       string_builder_appendf(sb, "        sub %s, %lld\n",
-			     REGISTER_NAMES[lhs.as.sval], rhs.as.sval);
+			     REGISTER_NAMES[lhs.as.sval][0], rhs.as.sval);
     } else if(lhs.type == VALUE_TYPE_REGISTER &&
 	      rhs.type == VALUE_TYPE_REGISTER)  {
       string_builder_appendf(sb, "        sub %s, %s\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     REGISTER_NAMES[rhs.as.sval]);
+			     REGISTER_NAMES[lhs.as.sval][0],
+			     REGISTER_NAMES[rhs.as.sval][0]);
 
     } else {
       panic("Unimplemented value->type's");    	
@@ -185,12 +313,12 @@ void instr_append(Instr* instr, string_builder *sb) {
     if(lhs.type == VALUE_TYPE_REGISTER &&
        rhs.type == VALUE_TYPE_LITERAL)  {
       string_builder_appendf(sb, "        add %s, %lld\n",
-			     REGISTER_NAMES[lhs.as.sval], rhs.as.sval);
+			     REGISTER_NAMES[lhs.as.sval][0], rhs.as.sval);
     } else if(lhs.type == VALUE_TYPE_REGISTER &&
 	      rhs.type == VALUE_TYPE_REGISTER)  {
       string_builder_appendf(sb, "        add %s, %s\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     REGISTER_NAMES[rhs.as.sval]);
+			     REGISTER_NAMES[lhs.as.sval][0],
+			     REGISTER_NAMES[rhs.as.sval][0]);
     } else {
       panic("Unimplemented value->type's");    	
     }
@@ -213,8 +341,8 @@ void instr_append(Instr* instr, string_builder *sb) {
     if(lhs.type == VALUE_TYPE_REGISTER &&
        rhs.type == VALUE_TYPE_REGISTER) {
       string_builder_appendf(sb, "        cmp %s, %s\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     REGISTER_NAMES[rhs.as.sval]);
+			     REGISTER_NAMES[lhs.as.sval][0],
+			     REGISTER_NAMES[rhs.as.sval][0]);
     } else {
       panic("Unimplemented value->type's");
     }
@@ -306,8 +434,8 @@ void instr_append(Instr* instr, string_builder *sb) {
     if(lhs.type == VALUE_TYPE_REGISTER &&
        rhs.type == VALUE_TYPE_REGISTER_OFF) {
       string_builder_appendf(sb, "        lea %s, [%s + %lld]\n",
-			     REGISTER_NAMES[lhs.as.sval],
-			     REGISTER_NAMES[rhs.as.sval],
+			     REGISTER_NAMES[lhs.as.sval][0],
+			     REGISTER_NAMES[rhs.as.sval][0],
 			     rhs.off);
     } else {
       panic("Unimplemented value->type's");
@@ -361,7 +489,7 @@ typedef struct Constant Constant;
 typedef enum{
   CONSTANT_TYPE_NONE,
   CONSTANT_TYPE_CSTR,
-  CONSTANT_TYPE_U64,
+  CONSTANT_TYPE_S64,
 }Constant_Type;
 
 struct Constant{
@@ -369,7 +497,7 @@ struct Constant{
   Constant_Type type;
   union{
     const char *cstrval;
-    u64 uval;
+    s64 sval;
   }as;
   
 };
@@ -388,35 +516,41 @@ struct Expr{
   Expr_Type type;
   union{
     s64 sval;
-    string stringval;
     Expr_Funccall funccall;
     Expr_Bin_Op bin_op;
     Expr_Strings strings;
   }as;
 };
 
+bool expr_is_static(Expr expr) {
+  switch(expr.type) {
+  }
+
+  panic("unimplemented expr_type");
+}
+
 typedef enum{
-  TYPE_NONE,
+  TYPE_NONE = 0,
   TYPE_U64,
   TYPE_U64_PTR,
   TYPE_U8,
   TYPE_U8_PTR,
 }Type;
 
-u64 type_size(Type type) {
+Size type_size(Type type) {
   switch(type) {
 
   case TYPE_U64:
-    return 8;
+    return SIZE_QWORD;
 
   case TYPE_U64_PTR:
-    return 8;
+    return SIZE_QWORD;
 
   case TYPE_U8:
-    return 1;
+    return SIZE_BYTE;
 
   case TYPE_U8_PTR:
-    return 8;
+    return SIZE_QWORD;
 
   default: {
     panic("unimplemented type");
@@ -426,15 +560,14 @@ u64 type_size(Type type) {
 
 Type type_ptr(Type type) {
   switch(type) {
-
   case TYPE_U8:
     return TYPE_U8_PTR;
 
-  default: {
-    panic("unimplemented type");
-  } break;
-    
+  case TYPE_U64:
+    return TYPE_U64_PTR;
   }
+
+  panic("unimplemented type: %d", type);
 }
 
 typedef enum{
@@ -494,10 +627,10 @@ u64 constants_append_cstr(Constants *c, const char *cstr) {
   return c->len - 1;
 }
 
-u64 constants_append_u64(Constants *c, u64 value) {
+u64 constants_append_s64(Constants *c, s64 value) {
   da_append(c, ((Constant) {
-	.type = CONSTANT_TYPE_U64,
-	.as.uval = value
+	.type = CONSTANT_TYPE_S64,
+	.as.sval = value
       }));
   
   return c->len - 1;
@@ -543,14 +676,14 @@ void constants_append(Constants *constants, string_builder *sb) {
     
     } break;
 
-    case CONSTANT_TYPE_U64: {
+    case CONSTANT_TYPE_S64: {
 
-      string_builder_appendf(sb, "        ;; CONSTANT_U64\n");
-      string_builder_appendf(sb, "        ;;     value=%llu\n", c->as.uval);
+      string_builder_appendf(sb, "        ;; CONSTANT_S64\n");
+      string_builder_appendf(sb, "        ;;     value=%lld\n", c->as.sval);
     
     
-      string_builder_appendf(sb, "%%define constant%llu %llu\n",
-			     k, c->as.uval);
+      string_builder_appendf(sb, "%%define constant%llu %lld\n",
+			     k, c->as.sval);
     
     } break;
     
@@ -676,7 +809,7 @@ Expr *program_expr_append_variable(Program *p, string name) {
   Expr *e = program_expr_append(p);
   
   e->type = EXPR_TYPE_VARIABLE;
-  e->as.stringval = name;
+  e->as.strings.fst = name;
   
   return e;
 }
@@ -685,7 +818,7 @@ Expr *program_expr_append_deref(Program *p, string name) {
   Expr *e = program_expr_append(p);
   
   e->type = EXPR_TYPE_VARIABLE_DEREF;
-  e->as.stringval = name;
+  e->as.strings.fst = name;
   
   return e;
 }
@@ -703,7 +836,7 @@ Expr *program_expr_append_pointer(Program *p, string name) {
   Expr *e = program_expr_append(p);
   
   e->type = EXPR_TYPE_VARIABLE_PTR;
-  e->as.stringval = name;
+  e->as.strings.fst = name;
   
   return e;
 }
@@ -796,16 +929,17 @@ void program_compile_declaration(Program *p,
     panic("variable already declared");
   }
 
-  u64 size = type_size(type);
+  Size size = type_size(type);
+  u64 n = size_in_bytes(size);
+
+  da_append(&p->instrs, SUB(RSP, LITERAL(n)));
+  p->stack_ptr += n;
 
   Var var;
   var.name = name;
   var.type = VAR_TYPE_PLAIN;
   var.as.plain_type = type;
-  var.off  = p->stack_ptr + size;
-
-  da_append(&p->instrs, SUB(RSP, LITERAL(size)));
-  p->stack_ptr += size;
+  var.off  = p->stack_ptr;
   
   da_append(&p->vars, var);
 
@@ -821,15 +955,18 @@ void program_compile_declaration_array(Program *p,
     panic("variable already declared");
   }
 
-  u64 size = type_size(type);
-
+  Size size = type_size(type);
   Type ptr_type = type_ptr(type);
-  u64 size_ptr = type_size(ptr_type);
-
-  da_append(&p->instrs, SUB(RSP, LITERAL(size_ptr + size * n)));
-  da_append(&p->instrs, LEA(RAX, RSP_OFF(size_ptr)));
-  da_append(&p->instrs, MOV(RSP_OFF(0), RAX));
-  p->stack_ptr += size_ptr + size * n;
+    
+  Size size_ptr = type_size(ptr_type);
+  u64 n_ptr = size_in_bytes(size_ptr);
+  
+  u64 ns = n * size_in_bytes(size) + n_ptr;
+  
+  da_append(&p->instrs, SUB(RSP, LITERAL(ns)));
+  da_append(&p->instrs, LEA(RAX, RSP_OFF(n_ptr)));
+  da_append(&p->instrs, MOV(RSP_OFF(0), RAX, size_ptr));
+  p->stack_ptr += ns;
 
   Var var;
   var.name = name;
@@ -857,7 +994,7 @@ void program_compile_declaration_struct(Program *p,
   u64 size = 0;
   for(u64 i=0;i<structure->fields.len;i++) {
     Structure_Field *field = &structure->fields.data[i];
-    size += type_size(field->type);
+    size += size_in_bytes(type_size(field->type));
   }
 
   da_append(&p->instrs, SUB(RSP, LITERAL(size)));
@@ -874,7 +1011,7 @@ void program_compile_declaration_struct(Program *p,
   p->expr_pool_count = 0;
 }
 
-u64 program_structure_off(Program *p, Var *var, string field_name) {
+u64 program_structure_off(Program *p, Var *var, string field_name, Type *out_type) {
    
   Structure *structure = &p->structs.data[var->as.struct_index];
 
@@ -883,95 +1020,88 @@ u64 program_structure_off(Program *p, Var *var, string field_name) {
     panic("structure: \""str_fmt"\" has no field named: \""str_fmt"\"\n",
 	  str_arg(structure->name), str_arg(field_name));
   }
+  *out_type = field->type;
   u64 field_index = (u64)
     (((unsigned char *) field - (unsigned char *) structure->fields.data) / sizeof(Structure_Field));
 
   u64 off = 0;
   for(u64 i=0;i<field_index;i++) {
     Structure_Field *sub_field = &structure->fields.data[i];
-    off += type_size(sub_field->type);
+    off += size_in_bytes(type_size(sub_field->type));
   }
 
   return off;
 }
 
-Value program_expr_location(Program *p, Expr *e) {
+Value program_expr_location(Program *p, Expr *e, Type *out_type) {
+
+  string name = e->as.strings.fst;
+  string field_name = e->as.strings.snd;
+  
+  Var *var = vars_find(&p->vars, name, TYPE_NONE);
+  if(!var) {
+    panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
+  }
+
+  Type type = var->as.plain_type;
+  Value result;
   switch(e->type) {
 
   case EXPR_TYPE_VARIABLE: {
-    
-    Var *var = vars_find(&p->vars, e->as.stringval, TYPE_NONE);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(e->as.stringval));
-    }
-
-    return RSP_OFF(p->stack_ptr - var->off);
-    
+    result = RSP_OFF(p->stack_ptr - var->off);    
   } break;
 
   case EXPR_TYPE_VARIABLE_PTR: {
-
-    Var *var = vars_find(&p->vars, e->as.stringval, TYPE_NONE);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(e->as.stringval));
-    }
-
-    return RSP_OFF(p->stack_ptr - var->off);
-    
+    result = RSP_OFF(p->stack_ptr - var->off);
   } break;
 
   case EXPR_TYPE_STRUCT_FIELD: {
-
-    string name = e->as.strings.fst;
-    string field_name = e->as.strings.snd;
-
-    Var *var = vars_find(&p->vars, name, TYPE_NONE);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
-    }
     if(var->type != VAR_TYPE_STRUCT) {
       panic("variable with the name: \""str_fmt"\" is not a structure\n", str_arg(name));
     }
     
-    return RSP_OFF(p->stack_ptr - var->off + program_structure_off(p, var, field_name));
-    
+    result = RSP_OFF(p->stack_ptr - var->off + program_structure_off(p, var, field_name, &type));
   } break;
 
   case EXPR_TYPE_VARIABLE_DEREF: {
-
-    string name = e->as.stringval;
-    Var *var = vars_find(&p->vars, name, TYPE_NONE);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
-    }
-
-    da_append(&p->instrs, MOV(RAX, RSP_OFF(p->stack_ptr - var->off)));
-    return RAX_OFF(0);
+    // TODO: deref var->type and update 'type'
     
+    // TODO: Maybe check that the pointer is actually 8 bytes long
+    Size size = SIZE_QWORD;
+    
+    da_append(&p->instrs, MOV(RAX, RSP_OFF(p->stack_ptr - var->off), size));
+    result = RAX_OFF(0);    
   } break;
     
   default:
     panic("unimplemented expr_type: %d", e->type);
-
   }
+
+  if(out_type) {
+    *out_type = type;
+  }
+
+  return result;
 }
 
 void program_funccall_compile(Program *p, Expr_Funccall *funccall);
 
 void program_expr_compile(Program *p,
 			  Expr *e,
-			  Value location) {
+			  Value location,
+			  Size size) {
 
   switch(e->type) {
 
   case EXPR_TYPE_VALUE: {
 
-    if(e->as.sval > INT_MAX &&
-       location.type != VALUE_TYPE_REGISTER) {
-      da_append(&p->instrs, MOV(RAX, LITERAL(e->as.sval)));
-      da_append(&p->instrs, MOV(location, RAX));      
+    s64 value = e->as.sval;
+    
+    if(location.type == VALUE_TYPE_REGISTER) {
+      da_append(&p->instrs, MOV(location, LITERAL(value), size));
     } else {
-      da_append(&p->instrs, MOV(location, LITERAL(e->as.sval)));
+      da_append(&p->instrs, MOV(RAX, LITERAL(value), size));
+      da_append(&p->instrs, MOV(location, RAX, size));
     }
     
   } break;
@@ -979,19 +1109,28 @@ void program_expr_compile(Program *p,
   case EXPR_TYPE_FUNCCALL: {
 
     program_funccall_compile(p, &e->as.funccall);
-    da_append(&p->instrs, MOV(location, RAX));      
+    da_append(&p->instrs, MOV(location, RAX, size));
     
   } break;
 
   case EXPR_TYPE_CONSTANT: {
 
     // TODO: Typecheck ???
-    //Constant *c = p->constants[e->as.sval];
+
+    Constant *c = &p->constants.data[e->as.sval];
+
+    Size value_size;
+    if(c->type == CONSTANT_TYPE_CSTR) {
+      value_size = SIZE_QWORD; // pointer-size
+    } else { // CONSTANT_TYPE_S64
+      value_size = size_of_s64(c->as.sval);
+    }
+    
     if(location.type == VALUE_TYPE_REGISTER) {
-      da_append(&p->instrs, MOV(location, CONSTANT(e->as.sval)));
+      da_append(&p->instrs, MOV(location, CONSTANT(e->as.sval), value_size));
     } else {
-      da_append(&p->instrs, MOV(RAX, CONSTANT(e->as.sval)));
-      da_append(&p->instrs, MOV(location, RAX));      
+      da_append(&p->instrs, MOV(RAX, CONSTANT(e->as.sval), value_size));
+      da_append(&p->instrs, MOV(location, RAX, value_size));
     }
     
   } break;
@@ -999,22 +1138,39 @@ void program_expr_compile(Program *p,
   case EXPR_TYPE_STRUCT_FIELD:
   case EXPR_TYPE_VARIABLE: {
 
+    Type variable_type;
+    Value variable_location = program_expr_location(p, e, &variable_type);
+
     if(location.type == VALUE_TYPE_REGISTER_OFF) {
-      da_append(&p->instrs, MOV(RAX, program_expr_location(p, e)));
-      da_append(&p->instrs, MOV(location, RAX));
+
+      Value temp;
+      if(location.as.sval == 0) { // RAX := 0
+	temp = RCX;
+      } else {
+	temp = RAX;
+      }
+
+      da_append(&p->instrs, MOV(temp, variable_location, size));
+      da_append(&p->instrs, MOV(location, temp, size));
+      
     } else {
-      da_append(&p->instrs, MOV(location, program_expr_location(p, e)));
+      da_append(&p->instrs, MOV(location, variable_location, size));
     }    
     
   } break;
 
   case EXPR_TYPE_VARIABLE_PTR: {
 
+    Type variable_type;
+    Value variable_location = program_expr_location(p, e, &variable_type);
+    Type variable_ptr_type = type_ptr(variable_type);
+    Size variable_ptr_size = type_size(variable_ptr_type);
+
     if(location.type == VALUE_TYPE_REGISTER) {
-      da_append(&p->instrs, LEA(location, program_expr_location(p, e)));
+      da_append(&p->instrs, LEA(location, variable_location));
     } else {
-      da_append(&p->instrs, LEA(RAX, program_expr_location(p, e)));
-      da_append(&p->instrs, MOV(location, RAX));            
+      da_append(&p->instrs, LEA(RAX, variable_location));
+      da_append(&p->instrs, MOV(location, RAX, variable_ptr_size));
     }    
     
   } break;
@@ -1029,18 +1185,18 @@ void program_expr_compile(Program *p,
 
     case EXPR_TYPE_VALUE: 
     case EXPR_TYPE_VARIABLE: {
-      program_expr_compile(p, lhs, RAX);
-      program_expr_compile(p, rhs, RCX);
+      program_expr_compile(p, lhs, RAX, size);
+      program_expr_compile(p, rhs, RCX, size);
     } break;
 
     case EXPR_TYPE_FUNCCALL: {
       da_append(&p->instrs, SUB(RSP, LITERAL(8)));
       p->stack_ptr += 8;
-      program_expr_compile(p, lhs, RSP_OFF(0));
+      program_expr_compile(p, lhs, RSP_OFF(0), size);
     
-      program_expr_compile(p, rhs, RCX);
+      program_expr_compile(p, rhs, RCX, size);
     
-      da_append(&p->instrs, MOV(RAX, RSP_OFF(0)));
+      da_append(&p->instrs, MOV(RAX, RSP_OFF(0), size));
       da_append(&p->instrs, ADD(RSP, LITERAL(8)));
       p->stack_ptr -= 8;
     } break;
@@ -1051,7 +1207,7 @@ void program_expr_compile(Program *p,
     }
     
     da_append(&p->instrs, SUB(RAX, RCX));
-    da_append(&p->instrs, MOV(location, RAX));
+    da_append(&p->instrs, MOV(location, RAX, size));
     
   } break;
 
@@ -1065,18 +1221,22 @@ void program_expr_compile(Program *p,
 
     case EXPR_TYPE_VALUE: 
     case EXPR_TYPE_VARIABLE: {
-      program_expr_compile(p, lhs, RAX);
-      program_expr_compile(p, rhs, RCX);
+      program_expr_compile(p, lhs, RAX, size);
+      program_expr_compile(p, rhs, RCX, size);
     } break;
-
+      
+    case EXPR_TYPE_SUBTRACTION:
     case EXPR_TYPE_FUNCCALL: {
+
+      // TODO: maybe only allocate as much space as you need
+      // 8 corresponds to SIZE_QWORD, this may be less
       da_append(&p->instrs, SUB(RSP, LITERAL(8)));
       p->stack_ptr += 8;
-      program_expr_compile(p, lhs, RSP_OFF(0));
+      program_expr_compile(p, lhs, RSP_OFF(0), size);
     
-      program_expr_compile(p, rhs, RCX);
+      program_expr_compile(p, rhs, RCX, size);
     
-      da_append(&p->instrs, MOV(RAX, RSP_OFF(0)));
+      da_append(&p->instrs, MOV(RAX, RSP_OFF(0), size));
       da_append(&p->instrs, ADD(RSP, LITERAL(8)));
       p->stack_ptr -= 8;
     } break;
@@ -1087,7 +1247,7 @@ void program_expr_compile(Program *p,
     }
     
     da_append(&p->instrs, ADD(RAX, RCX));
-    da_append(&p->instrs, MOV(location, RAX));
+    da_append(&p->instrs, MOV(location, RAX, size));
     
   } break;
     
@@ -1113,16 +1273,20 @@ void program_funccall_compile(Program *p, Expr_Funccall *funccall) {
   p->stack_ptr += shadow_space;
   da_append(&p->instrs, SUB(RSP, LITERAL(shadow_space)));
 
+  // TODO: define function-defintions and determine size
+  // for now everything is SIZE_QWORD
+  Size size = SIZE_QWORD;
+
   // calculate argument-expressions and save them in the shadowspace
   for(u64 i=0;i<funccall->args_len;i++) {
     Expr *e = funccall->args[i];
     if(e->type == EXPR_TYPE_VARIABLE) {
       //pass
     } else {
-      program_expr_compile(p, e, RSP_OFF(
-					 p->stack_ptr - stack_ptr_before - shadow_space + i  * 8
+            
+      program_expr_compile(p, e, RSP_OFF(p->stack_ptr - stack_ptr_before - shadow_space + i  * 8
 					 //i  * 8
-					 ));
+					 ), size);
     }
   }
 
@@ -1134,20 +1298,20 @@ void program_funccall_compile(Program *p, Expr_Funccall *funccall) {
 
     if(i < FASTCALL_REGISTER_COUNT) { // rcx, rdx, r8, r9
 
-      Value source;            
+      Value source;
       if(e->type == EXPR_TYPE_VARIABLE) {
-	source = program_expr_location(p, e);
+	source = program_expr_location(p, e, NULL);
       } else {
 	source = RSP_OFF(target);
       }
 
-      da_append(&p->instrs, MOV(REGISTER(FASTCALL_REGISTERS[i]), source));
+      da_append(&p->instrs, MOV(REGISTER(FASTCALL_REGISTERS[i]), source, size));
     } else { // push ...
 
       if(e->type == EXPR_TYPE_VARIABLE) {
 
-	da_append(&p->instrs, MOV(RAX, program_expr_location(p, e)));
-	da_append(&p->instrs, MOV(RSP_OFF(target), RAX));
+	da_append(&p->instrs, MOV(RAX, program_expr_location(p, e, NULL), size));
+	da_append(&p->instrs, MOV(RSP_OFF(target), RAX, size));
       } else {
 
 	// variable already in the right place
@@ -1170,10 +1334,11 @@ void program_funccall_compile(Program *p, Expr_Funccall *funccall) {
 
 void program_compile_assignment(Program *p,
 				Expr *lhs,
-				Expr *rhs) {
-  
-  program_expr_compile(p, rhs, program_expr_location(p, lhs));
+				Expr *rhs,
+				Size size) {
 
+  Value location = program_expr_location(p, lhs, NULL);
+  program_expr_compile(p, rhs, location, size);  
   p->expr_pool_count = 0;
 }
 
@@ -1231,23 +1396,28 @@ Foo program_compile_if_begin(Program *p,
 			     Stmt_If_Type operand,
 			     Expr *rhs) {
 
+  
+  // TODO: evaluate size of expressions  
+    Size size = SIZE_QWORD;  
+  
   // Do not push, if you dont need to
   switch(rhs->type) {
 
   case EXPR_TYPE_VALUE: 
   case EXPR_TYPE_VARIABLE: {
-    program_expr_compile(p, lhs, RAX);
-    program_expr_compile(p, rhs, RCX);
+    program_expr_compile(p, lhs, RAX, size);
+    program_expr_compile(p, rhs, RCX, size);
   } break;
 
+    // TODO: take into account size
   case EXPR_TYPE_FUNCCALL: {
     da_append(&p->instrs, SUB(RSP, LITERAL(8)));
     p->stack_ptr += 8;
-    program_expr_compile(p, lhs, RSP_OFF(0));
+    program_expr_compile(p, lhs, RSP_OFF(0), size);
     
-    program_expr_compile(p, rhs, RCX);
+    program_expr_compile(p, rhs, RCX, size);
     
-    da_append(&p->instrs, MOV(RAX, RSP_OFF(0)));
+    da_append(&p->instrs, MOV(RAX, RSP_OFF(0), size));
     da_append(&p->instrs, ADD(RSP, LITERAL(8)));
     p->stack_ptr -= 8;
   } break;
@@ -1341,7 +1511,8 @@ Program slurp_file_program() {
 							  program_expr_append_value(&program, 0),
 							  program_expr_append_value(&program, OPEN_EXISTING),
 							  program_expr_append_value(&program, FILE_ATTRIBUTE_NORMAL),
-							  program_expr_append_value(&program, 0)));
+							  program_expr_append_value(&program, 0)),
+			     SIZE_QWORD);
 
   // if(handle == INVALID_HANDLE_VALUE) {
   Foo state = program_compile_if_begin(&program,
@@ -1358,7 +1529,8 @@ Program slurp_file_program() {
 			     program_expr_append_variable(&program,
 							  string_from_cstr("error")),
 			     program_expr_append_funccall(&program,
-							  string_from_cstr("GetLastError")));
+							  string_from_cstr("GetLastError")),
+			     SIZE_QWORD);
 
   //     ExitProcess(error);
   program_compile_funccall(&program,
@@ -1377,7 +1549,8 @@ Program slurp_file_program() {
 			     program_expr_append_variable(&program,
 							  string_from_cstr("process_heap")),
 			     program_expr_append_funccall(&program,
-							  string_from_cstr("GetProcessHeap")));
+							  string_from_cstr("GetProcessHeap")),
+			     SIZE_QWORD);
 
   // size : u64;
   program_compile_declaration(&program,
@@ -1391,7 +1564,8 @@ Program slurp_file_program() {
 			     program_expr_append_funccall(&program,
 							  string_from_cstr("GetFileSize"),
 							  program_expr_append_variable(&program,
-										       string_from_cstr("handle"))));
+										       string_from_cstr("handle"))),
+			     SIZE_QWORD);
   // space : u64;
   program_compile_declaration(&program,
 			      string_from_cstr("space"),
@@ -1408,7 +1582,8 @@ Program slurp_file_program() {
 							  program_expr_append_value(&program,
 										    0),
 							  program_expr_append_variable(&program,
-										       string_from_cstr("size"))));
+										       string_from_cstr("size"))),
+			     SIZE_QWORD);
 
   // written : u64;
   program_compile_declaration(&program,
@@ -1479,7 +1654,8 @@ Program buffered_slurp_file_program() {
 							  program_expr_append_value(&program, 0),
 							  program_expr_append_value(&program, OPEN_EXISTING),
 							  program_expr_append_value(&program, FILE_ATTRIBUTE_NORMAL),
-							  program_expr_append_value(&program, 0)));
+							  program_expr_append_value(&program, 0)),
+			     SIZE_QWORD);
 
   // if(handle == INVALID_HANDLE_VALUE) {
   Foo state = program_compile_if_begin(&program,
@@ -1508,7 +1684,8 @@ Program buffered_slurp_file_program() {
 			     program_expr_append_funccall(&program,
 							  string_from_cstr("GetFileSize"),
 							  program_expr_append_variable(&program,
-										       string_from_cstr("handle"))));
+										       string_from_cstr("handle"))),
+			     SIZE_QWORD);
 
   // written : u64;
   program_compile_declaration(&program,
@@ -1537,7 +1714,8 @@ Program buffered_slurp_file_program() {
 			     program_expr_append_funccall(&program,
 							  string_from_cstr("GetStdHandle"),
 							  program_expr_append_value(&program,
-										    -11)));
+										    -11)),
+			     SIZE_QWORD);
 
   // while(size != 0) {
   Foo loop_state = program_compile_while_begin(&program,
@@ -1551,7 +1729,8 @@ Program buffered_slurp_file_program() {
   program_compile_assignment(&program,
 			     program_expr_append_variable(&program,
 							  string_from_cstr("len")),
-			     program_expr_append_value(&program, buf_size));
+			     program_expr_append_value(&program, buf_size),
+			     SIZE_QWORD);
 
   //     if(size < len) {
   state = program_compile_if_begin(&program,
@@ -1567,7 +1746,8 @@ Program buffered_slurp_file_program() {
 			     program_expr_append_variable(&program,
 							  string_from_cstr("len")),
 			     program_expr_append_variable(&program,
-							  string_from_cstr("size")));
+							  string_from_cstr("size")),
+			     SIZE_QWORD);
 
   //     }
   program_compile_if_end(&program, state);
@@ -1577,7 +1757,7 @@ Program buffered_slurp_file_program() {
 			   string_from_cstr("ReadFile"),
 			   program_expr_append_variable(&program,
 							string_from_cstr("handle")),
-			   program_expr_append_pointer(&program,
+			   program_expr_append_variable(&program,
 						       string_from_cstr("buf")),
 			   program_expr_append_variable(&program,
 							string_from_cstr("len")),
@@ -1594,14 +1774,15 @@ Program buffered_slurp_file_program() {
 							     program_expr_append_variable(&program,
 											  string_from_cstr("size")),
 							     program_expr_append_variable(&program,
-											  string_from_cstr("written"))));
+											  string_from_cstr("written"))),
+			     SIZE_QWORD);
 
   //     WriteFile(stdOutputHandle, buf, written, &written, NULL);
   program_compile_funccall(&program,
 			   string_from_cstr("WriteFile"),
 			   program_expr_append_variable(&program,
 							string_from_cstr("stdOutputHandle")),
-			   program_expr_append_pointer(&program,
+			   program_expr_append_variable(&program,
 						       string_from_cstr("buf")),
 			   program_expr_append_variable(&program,
 							string_from_cstr("written")),
@@ -1664,19 +1845,21 @@ Program struct_example_program() {
 							      string_from_cstr("data")),
 			     program_expr_append_constant(&program,
 							  constants_append_cstr(&program.constants,
-										s_content.data)));
+										s_content.data)),
+			     SIZE_QWORD);
   program_compile_assignment(&program,
 			     program_expr_append_struct_field(&program,
 							      string_from_cstr("s"),
 							      string_from_cstr("len")),
 			     program_expr_append_constant(&program,
-							  constants_append_u64(&program.constants,
-									       s_content.len)));
+							  constants_append_s64(&program.constants,
+									       s_content.len)),
+			     SIZE_QWORD);
 
-  // written : u64*;
+  // written : u64;
   program_compile_declaration(&program,
 			      string_from_cstr("written"),
-			      TYPE_U64_PTR);
+			      TYPE_U64);
 
   // WriteFile(GetStdHandle(-11), s.data, s.len, &written, NULL);
   program_compile_funccall(&program,
@@ -1699,15 +1882,7 @@ Program struct_example_program() {
   return program;
 }
 
-// TODO:
-//     derefence ptr
-//     functions
-//     type checking
-
-//     remove unnecassary instructions
-
-int main() {
-
+Program dbca_program() {
   Program program = {0};
 
   // buf : u8[8];
@@ -1724,78 +1899,87 @@ int main() {
 			     program_expr_append_variable(&program,
 							  string_from_cstr("buf_len")),
 			     program_expr_append_value(&program,
-						       0));
+						       0),
+			     SIZE_QWORD);
 
-  // ptr : u64* = buf;
+  // i : u64 = 4
+  program_compile_declaration(&program,
+			      string_from_cstr("i"),
+			      TYPE_U64);
+  program_compile_assignment(&program,
+			     program_expr_append_variable(&program,
+							  string_from_cstr("i")),
+			     program_expr_append_value(&program,
+						       4),
+			     SIZE_QWORD);
+
+  // ptr : u64* = buf + i - 1;
   program_compile_declaration(&program,
 			      string_from_cstr("ptr"),
 			      TYPE_U64_PTR);
   program_compile_assignment(&program,
 			     program_expr_append_variable(&program,
 							  string_from_cstr("ptr")),
+			     program_expr_append_sum(&program,
+						     program_expr_append_variable(&program,
+										  string_from_cstr("buf")),
+						     program_expr_append_subtraction(&program,
+										     program_expr_append_variable(&program,
+														  string_from_cstr("i")),
+										     program_expr_append_value(&program,
+													       1))),
+			     SIZE_QWORD);
+
+  // value : u8 = 65
+  program_compile_declaration(&program,
+			      string_from_cstr("value"),
+			      TYPE_U64);
+  program_compile_assignment(&program,
 			     program_expr_append_variable(&program,
-							  string_from_cstr("buf")));
+							  string_from_cstr("value")),
+			     program_expr_append_value(&program,
+						       65),
+			     SIZE_BYTE);
   
-  // *ptr = 65;
+  // while(i > 0) {
+  Foo for_loop = program_compile_while_begin(&program,
+					     program_expr_append_variable(&program,
+									  string_from_cstr("i")),
+					     STMT_IF_TYPE_GREATER,
+					     program_expr_append_value(&program,
+								       0));
+
+  //     *ptr = value;
   program_compile_assignment(&program,
 			     program_expr_append_deref(&program,
 						       string_from_cstr("ptr")),
-			     program_expr_append_value(&program,
-						       65));
-  // ptr = ptr + 1
+			     program_expr_append_variable(&program,
+							  string_from_cstr("value")),
+			     SIZE_BYTE);
+  
+  //     ptr = ptr - 1
   program_compile_assignment(&program,
 			     program_expr_append_variable(&program,
 							  string_from_cstr("ptr")),
-			     program_expr_append_sum(&program,
-						     program_expr_append_variable(&program,
-										  string_from_cstr("ptr")),
-						     program_expr_append_value(&program,
-									       1)));
+			     program_expr_append_subtraction(&program,
+							     program_expr_append_variable(&program,
+											  string_from_cstr("ptr")),
+							     program_expr_append_value(&program,
+										       1)),
+			     SIZE_QWORD);
 
-  // *ptr = 66;
-  program_compile_assignment(&program,
-			     program_expr_append_deref(&program,
-						       string_from_cstr("ptr")),
-			     program_expr_append_value(&program,
-						       66));
-
-  // ptr = ptr + 1
+  //     value = value + 1
   program_compile_assignment(&program,
 			     program_expr_append_variable(&program,
-							  string_from_cstr("ptr")),
+							  string_from_cstr("value")),
 			     program_expr_append_sum(&program,
 						     program_expr_append_variable(&program,
-										  string_from_cstr("ptr")),
+										  string_from_cstr("value")),
 						     program_expr_append_value(&program,
-									       1)));
+									       1)),
+			     SIZE_QWORD);
 
-  // *ptr = 67;
-  program_compile_assignment(&program,
-			     program_expr_append_deref(&program,
-						       string_from_cstr("ptr")),
-			     program_expr_append_value(&program,
-						       67));
-
-
-  // ptr = ptr + 1
-  program_compile_assignment(&program,
-			     program_expr_append_variable(&program,
-							  string_from_cstr("ptr")),
-			     program_expr_append_sum(&program,
-						     program_expr_append_variable(&program,
-										  string_from_cstr("ptr")),
-						     program_expr_append_value(&program,
-									       1)));
-
-  // *ptr = 10;
-  program_compile_assignment(&program,
-			     program_expr_append_deref(&program,
-						       string_from_cstr("ptr")),
-			     program_expr_append_value(&program,
-						       10));
-
-
-  // buf_len = buf_len + 4
+  //     buf_len = buf_len + 1
   program_compile_assignment(&program,
 			     program_expr_append_variable(&program,
 							  string_from_cstr("buf_len")),
@@ -1803,15 +1987,32 @@ int main() {
 						     program_expr_append_variable(&program,
 										  string_from_cstr("buf_len")),
 						     program_expr_append_value(&program,
-									       4)));
+									       1)),
+			     SIZE_QWORD);
+
+  //     i = i - 1
+  program_compile_assignment(&program,
+			     program_expr_append_variable(&program,
+							  string_from_cstr("i")),
+			     program_expr_append_subtraction(&program,
+							     program_expr_append_variable(&program,
+											  string_from_cstr("i")),
+							     program_expr_append_value(&program,
+										       1)),
+			     SIZE_QWORD);
+
+
+  // }
+  program_compile_while_end(&program, for_loop);
+  
 
   // if(buf_len > 0) {
   Foo buf_len_positive = program_compile_if_begin(&program,
-				       program_expr_append_variable(&program,
-								    string_from_cstr("buf_len")),
-				       STMT_IF_TYPE_GREATER,
-				       program_expr_append_value(&program,
-								 0));
+						  program_expr_append_variable(&program,
+									       string_from_cstr("buf_len")),
+						  STMT_IF_TYPE_GREATER,
+						  program_expr_append_value(&program,
+									    0));
 
   //     handle : u64* = GetStdHandle(-11);
   program_compile_declaration(&program,
@@ -1823,7 +2024,8 @@ int main() {
 			     program_expr_append_funccall(&program,
 							  string_from_cstr("GetStdHandle"),
 							  program_expr_append_value(&program,
-										    -11)));
+										    -11)),
+			     SIZE_QWORD);
 
   //     if(handle == INVALID_HAMDLE_VALUE) {
   Foo GetStdHandleFailed = program_compile_if_begin(&program,
@@ -1854,9 +2056,9 @@ int main() {
 									      program_expr_append_variable(&program,
 													   string_from_cstr("handle")),
 									      program_expr_append_variable(&program,
-													  string_from_cstr("buf")),
+													   string_from_cstr("buf")),
 									      program_expr_append_variable(&program,
-													  string_from_cstr("buf_len")),
+													   string_from_cstr("buf_len")),
 									      program_expr_append_pointer(&program,
 													  string_from_cstr("written")),
 									      program_expr_append_value(&program,
@@ -1876,6 +2078,24 @@ int main() {
 
   // }
   program_compile_if_end(&program, buf_len_positive);
+
+
+  return program;
+}
+
+// TODO:
+//     functions
+//     type checking
+
+//     remove unnecassary instructions
+
+int main() {
+
+  //Program program = {0};
+  //Program program = struct_example_program();
+  Program program = dbca_program();
+  //Program program = slurp_file_program();
+  //Program program = buffered_slurp_file_program();
   
   string_builder sb = {0};
   program_append(&program, &sb);
