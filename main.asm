@@ -7,129 +7,147 @@
         extern ReadFile
         extern WriteFile
         extern CloseHandle
-
-        section .data
-        ;; CONSTANT_STRING
-        ;;     value="main.fe"
-constant0: db 109,97,105,110,46,102,101,0
-
+        extern GetProcessHeap
+        extern HeapAlloc
         section .text
 main:
-        sub rsp, 8
-        sub rsp, 56
-        mov rax, constant0
-        mov [rsp + 0], rax
-        mov rax, 2147483648
-        mov [rsp + 8], rax
-        mov rax, 1
-        mov [rsp + 16], rax
-        mov rax, 0
-        mov [rsp + 24], rax
-        mov rax, 3
-        mov [rsp + 32], rax
-        mov rax, 128
-        mov [rsp + 40], rax
-        mov rax, 0
-        mov [rsp + 48], rax
-        mov rcx, [rsp + 0]
-        mov rdx, [rsp + 8]
-        mov r8, [rsp + 16]
-        mov r9, [rsp + 24]
-        call CreateFileA
-        add rsp, 56
-        mov [rsp + 0], rax
-        mov rax, [rsp + 0]
-        mov rcx, -1
-        cmp rax, rcx
-        jne .label0
-        sub rsp, 40
-        sub rsp, 32
-        call GetLastError
-        add rsp, 32
-        mov [rsp + 0], eax
-        mov rcx, [rsp + 0]
-        call ExitProcess
-        add rsp, 40
-.label0:
-        sub rsp, 8
-        sub rsp, 32
-        mov rax, 0
-        mov [rsp + 8], rax
-        mov rcx, [rsp + 40]
-        mov rdx, [rsp + 8]
-        call GetFileSize
-        add rsp, 32
-        mov [rsp + 0], eax
-        sub rsp, 4
         sub rsp, 16
         lea rax, [rsp + 8]
         mov [rsp + 0], rax
+        sub rsp, 4
+        mov eax, 0
+        mov [rsp + 0], eax
+        sub rsp, 4
+        mov eax, 4
+        mov [rsp + 0], eax
         sub rsp, 8
         sub rsp, 8
-        sub rsp, 44
-        mov rax, -11
+        mov rax, [rsp + 24]
         mov [rsp + 0], rax
-        mov rcx, [rsp + 0]
-        call GetStdHandle
-        add rsp, 44
+        mov rax, 0
+        sub rsp, 4
+        mov eax, [rsp + 20]
+        mov [rsp + 0], eax
+        mov ebx, 1
+        mov eax, [rsp + 0]
+        add rsp, 4
+        sub eax, ebx
+        mov rbx, rax
+        mov rax, [rsp + 0]
+        add rsp, 8
+        add rax, rbx
         mov [rsp + 0], rax
+        sub rsp, 1
+        mov al, 65
+        mov [rsp + 0], al
+.label0:
+        sub rsp, 4
+        mov eax, [rsp + 13]
+        mov [rsp + 0], eax
+        mov ebx, 0
+        mov eax, [rsp + 0]
+        add rsp, 4
+        cmp eax, ebx
+        jle .label1
+        mov rax, [rsp + 1]
+        mov bl, [rsp + 0]
+        mov [rax + 0], bl
+        sub rsp, 8
+        mov rax, [rsp + 9]
+        mov [rsp + 0], rax
+        mov rbx, 1
+        mov rax, [rsp + 0]
+        add rsp, 8
+        sub rax, rbx
+        mov [rsp + 1], rax
+        sub rsp, 1
+        mov al, [rsp + 1]
+        mov [rsp + 0], al
+        mov bl, 1
+        mov al, [rsp + 0]
+        add rsp, 1
+        add al, bl
+        mov [rsp + 0], al
+        sub rsp, 4
+        mov eax, [rsp + 17]
+        mov [rsp + 0], eax
+        mov ebx, 1
+        mov eax, [rsp + 0]
+        add rsp, 4
+        add eax, ebx
+        mov [rsp + 13], eax
+        sub rsp, 4
+        mov eax, [rsp + 13]
+        mov [rsp + 0], eax
+        mov ebx, 1
+        mov eax, [rsp + 0]
+        add rsp, 4
+        sub eax, ebx
+        mov [rsp + 9], eax
+        jmp .label0
 .label1:
-        mov rax, [rsp + 36]
-        mov rcx, 0
-        cmp rax, rcx
-        je .label2
-        mov rax, 8
-        mov [rsp + 8], rax
-        mov rax, [rsp + 36]
-        mov rcx, [rsp + 8]
-        cmp rax, rcx
-        jge .label3
-        mov rax, [rsp + 36]
-        mov [rsp + 8], rax
-.label3:
-        sub rsp, 44
-        mov rax, [rsp + 52]
-        mov [rsp + 16], rax
-        lea rax, [rsp + 76]
-        mov [rsp + 24], rax
-        mov rax, 0
-        mov [rsp + 32], rax
-        mov rcx, [rsp + 88]
-        mov rdx, [rsp + 60]
-        mov r8, [rsp + 16]
-        mov r9, [rsp + 24]
-        call ReadFile
-        add rsp, 44
-        mov rax, [rsp + 36]
-        mov ecx, [rsp + 32]
-        sub rax, rcx
-        mov [rsp + 36], rax
-        sub rsp, 44
-        mov eax, [rsp + 76]
-        mov [rsp + 16], eax
-        lea rax, [rsp + 76]
-        mov [rsp + 24], rax
-        mov rax, 0
-        mov [rsp + 32], rax
-        mov rcx, [rsp + 44]
-        mov rdx, [rsp + 60]
-        mov r8, [rsp + 16]
-        mov r9, [rsp + 24]
-        call WriteFile
-        add rsp, 44
-        jmp .label1
-.label2:
-        sub rsp, 44
-        mov rcx, [rsp + 88]
-        call CloseHandle
-        add rsp, 44
-        sub rsp, 44
-        mov rax, [rsp + 80]
+        sub rsp, 4
+        mov eax, [rsp + 17]
+        mov [rsp + 0], eax
+        mov ebx, 0
+        mov eax, [rsp + 0]
+        add rsp, 4
+        cmp eax, ebx
+        jle .label2
+        sub rsp, 8
+        sub rsp, 39
+        mov eax, -11
+        mov [rsp + 0], eax
+        mov ecx, [rsp + 0]
+        call GetStdHandle
+        add rsp, 39
         mov [rsp + 0], rax
-        mov rcx, [rsp + 0]
+        sub rsp, 8
+        mov rax, [rsp + 8]
+        mov [rsp + 0], rax
+        mov rbx, -1
+        mov rax, [rsp + 0]
+        add rsp, 8
+        cmp rax, rbx
+        jne .label3
+        sub rsp, 39
+        sub rsp, 32
+        call GetLastError
+        add rsp, 32
+        mov [rsp + 0], al
+        mov cl, [rsp + 0]
         call ExitProcess
-        add rsp, 44
-        add rsp, 52
+        add rsp, 39
+.label3:
+        sub rsp, 4
+        sub rsp, 1
+        sub rsp, 50
+        mov rax, 0
+        mov [rsp + 32], rax
+        mov rcx, [rsp + 55]
+        mov rdx, [rsp + 80]
+        mov r8d, [rsp + 76]
+        lea r9, [rsp + 51]
+        call WriteFile
+        add rsp, 50
+        mov [rsp + 0], al
+        mov bl, 0
+        mov al, [rsp + 0]
+        add rsp, 1
+        cmp al, bl
+        jne .label4
+        sub rsp, 35
+        sub rsp, 32
+        call GetLastError
+        add rsp, 32
+        mov [rsp + 0], al
+        mov cl, [rsp + 0]
+        call ExitProcess
+        add rsp, 35
+.label4:
+        add rsp, 12
+.label2:
+        add rsp, 33
         mov rcx, 0
         sub rsp, 40
         call ExitProcess
