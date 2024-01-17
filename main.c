@@ -978,6 +978,28 @@ Type expr_to_type(Program *p, Expr *e) {
     
   } break;
 
+  case EXPR_TYPE_STRUCT_FIELD: {
+
+    string name = e->as.strings.fst;
+    string field_name = e->as.strings.snd;
+
+    Var *var = vars_find(&p->vars, name);
+    if(!var) {
+      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
+    }
+    assert(var->type.type == TYPE_STRUCT && var->type.struct_index >= 0);
+    Structure *structure = &p->structs.data[var->type.struct_index];
+
+    Structure_Field *field = structure_fields_find(&structure->fields, field_name);    
+    if(!field) {
+      panic("structure: \""str_fmt"\" has no field named: \""str_fmt"\"\n",
+	    str_arg(structure->name), str_arg(field_name));
+    }
+
+    return field->type;
+    
+  } break;
+
   case EXPR_TYPE_VARIABLE: {
 
     string name = e->as.strings.fst;
@@ -1039,7 +1061,9 @@ Type expr_to_type(Program *p, Expr *e) {
       
     case CONSTANT_TYPE_CSTR:
       return PTR(TYPE_U8);
-	
+
+    case CONSTANT_TYPE_S64:
+      return S64;
     }
 
     panic("unimplemented constant_type");
@@ -1065,6 +1089,9 @@ bool expr_is_static(Expr *e) {
     return true;
 
   case EXPR_TYPE_VARIABLE_PTR:
+    return true;
+
+  case EXPR_TYPE_STRUCT_FIELD:
     return true;
 
   case EXPR_TYPE_VARIABLE:
@@ -1327,7 +1354,7 @@ void program_compile_declaration_struct(Program *p,
   Var var;
   var.name = name;
   var.type = STRUCT((u32)
-    (((unsigned char *) structure - (unsigned char *) p->structs.data) / sizeof(Structure)));
+		    (((unsigned char *) structure - (unsigned char *) p->structs.data) / sizeof(Structure)));
   var.off  = p->stack_ptr;
   da_append(&p->vars, var);
   
@@ -1336,7 +1363,7 @@ void program_compile_declaration_struct(Program *p,
 
 u64 program_structure_off(Program *p, Var *var, string field_name, Type *out_type) {
 
-  assert(var->type.struct_index > 0);
+  assert(var->type.type == TYPE_STRUCT && var->type.struct_index >= 0);
   Structure *structure = &p->structs.data[var->type.struct_index];
 
   Structure_Field *field = structure_fields_find(&structure->fields, field_name);
@@ -1344,7 +1371,7 @@ u64 program_structure_off(Program *p, Var *var, string field_name, Type *out_typ
     panic("structure: \""str_fmt"\" has no field named: \""str_fmt"\"\n",
 	  str_arg(structure->name), str_arg(field_name));
   }
-  *out_type = field->type;
+  if(out_type) *out_type = field->type;
   u64 field_index = (u64)
     (((unsigned char *) field - (unsigned char *) structure->fields.data) / sizeof(Structure_Field));
 
@@ -1380,7 +1407,7 @@ Value program_expr_location(Program *p, Expr *e, Type *out_type) {
 
   case EXPR_TYPE_STRUCT_FIELD: {
     
-    if(var->type.struct_index > 0) { // type is a struct
+    if(var->type.type != TYPE_STRUCT) {
       panic("variable with the name: \""str_fmt"\" is not a structure\n", str_arg(name));
     }
     
@@ -1486,11 +1513,22 @@ void program_expr_compile(Program *p,
 
     Size value_size;
     if(cast_size == SIZE_NONE) {
-      if(c->type == CONSTANT_TYPE_CSTR) {
+
+      
+      switch(c->type) {
+
+      case CONSTANT_TYPE_CSTR:
 	value_size = SIZE_QWORD; // pointer-size
-      } else { // CONSTANT_TYPE_S64
+	break;
+	
+      case CONSTANT_TYPE_S64:
 	value_size = size_of_s64(c->as.sval);
-      }      
+	break;
+	
+      default:
+	panic("unimplemented content->type");
+      }
+      
     } else {
       value_size = cast_size;
     }
@@ -1785,12 +1823,12 @@ void program_compile_assignment(Program *p,
 				Expr *lhs,
 				Expr *rhs) {
 
-  if(!program_type_check(p, lhs, rhs, NULL)) {    
+  if(!program_type_check(p, lhs, rhs, NULL)) {
     panic("Can not assign expressions with different type");
   }
 
   Value location = program_expr_location(p, lhs, NULL);
-  program_expr_compile(p, rhs, location, SIZE_NONE); 
+  program_expr_compile(p, rhs, location, SIZE_NONE);
   p->expr_pool_count = 0;
 }
 
@@ -2065,7 +2103,7 @@ void slurp_file_program(Program *p) {
 							string_from_cstr("GetStdHandle"),
 						        program_expr_append_cast(p,
 										 program_expr_append_value(p,
-													    -11),
+													   -11),
 										 U32)),
 			   program_expr_append_variable(p,
 							string_from_cstr("space")),
@@ -2231,7 +2269,7 @@ void buffered_slurp_file_program(Program *p) {
 			   program_expr_append_variable(p,
 							string_from_cstr("handle")),
 			   program_expr_append_variable(p,
-						       string_from_cstr("buf")),
+							string_from_cstr("buf")),
 			   program_expr_append_variable(p,
 							string_from_cstr("len")),
 			   program_expr_append_pointer(p,
@@ -2257,7 +2295,7 @@ void buffered_slurp_file_program(Program *p) {
 			   program_expr_append_variable(p,
 							string_from_cstr("stdOutputHandle")),
 			   program_expr_append_variable(p,
-						       string_from_cstr("buf")),
+							string_from_cstr("buf")),
 			   program_expr_append_variable(p,
 							string_from_cstr("written")),
 			   program_expr_append_cast(p,
@@ -2288,8 +2326,7 @@ void buffered_slurp_file_program(Program *p) {
 						    U8));  
 }
 
-Program struct_example_program() {
-  Program program = {0};
+void struct_example_program(Program *p) {
 
   /*
     struct :: string {
@@ -2306,502 +2343,509 @@ Program struct_example_program() {
 	.name = string_from_cstr("len"),
 	.type = TYPE_U64,
       }));
-  da_append(&program.structs, ((Structure) {
+  da_append(&p->structs, ((Structure) {
 	.name = string_from_cstr("string"),
 	.fields = string_fields,
       }));
 
   // s : string;
-  program_compile_declaration_struct(&program,
+  program_compile_declaration_struct(p,
 				     string_from_cstr("s"),
 				     string_from_cstr("string"));
 
   // s = "Hello, World!";
   string s_content = string_from_cstr("Hello, World!\n");
-  program_compile_assignment(&program,
-			     program_expr_append_struct_field(&program,
+  program_compile_assignment(p,
+			     program_expr_append_struct_field(p,
 							      string_from_cstr("s"),
 							      string_from_cstr("data")),
-			     program_expr_append_constant(&program,
-							  constants_append_cstr(&program.constants,
+			     program_expr_append_constant(p,
+							  constants_append_cstr(&p->constants,
 										s_content.data)));
-  program_compile_assignment(&program,
-			     program_expr_append_struct_field(&program,
+  program_compile_assignment(p,
+			     program_expr_append_struct_field(p,
 							      string_from_cstr("s"),
 							      string_from_cstr("len")),
-			     program_expr_append_constant(&program,
-							  constants_append_s64(&program.constants,
-									       s_content.len)));
+			     program_expr_append_cast(p,
+						      program_expr_append_constant(p,
+										   constants_append_s64(&p->constants,
+													s_content.len)),
+						      U64));
 
   // written : u64;
-  program_compile_declaration(&program,
+  program_compile_declaration(p,
 			      string_from_cstr("written"),
-			      U64);
+			      U32);
 
   // WriteFile(GetStdHandle(-11), s.data, s.len, &written, NULL);
-  program_compile_funccall(&program,
+  program_compile_funccall(p,
 			   string_from_cstr("WriteFile"),
-			   program_expr_append_funccall(&program,
+			   program_expr_append_funccall(p,
 							string_from_cstr("GetStdHandle"),
-							program_expr_append_value(&program,
-										  -11)),
-			   program_expr_append_struct_field(&program,
+						        program_expr_append_cast(p,
+										 program_expr_append_value(p,
+													   -11),
+										 U32)),
+			   program_expr_append_struct_field(p,
 							    string_from_cstr("s"),
 							    string_from_cstr("data")),
-			   program_expr_append_struct_field(&program,
-							    string_from_cstr("s"),
-							    string_from_cstr("len")),
-			   program_expr_append_pointer(&program,
+			   program_expr_append_cast(p,
+						    program_expr_append_struct_field(p,
+										     string_from_cstr("s"),
+										     string_from_cstr("len")),
+						    U32),
+			   program_expr_append_pointer(p,
 						       string_from_cstr("written")),
-			   program_expr_append_value(&program,
-						     0));
+			   program_expr_append_cast(p,
+						    program_expr_append_value(p,
+											   0),
+						    PTR(TYPE_U64)));
 
-  return program;
-}
+			   }
 
-void dcba_program(Program *p) {
+    void dcba_program(Program *p) {
 
-  // buf : u8[8];
-  program_compile_declaration_array(p,
-				    string_from_cstr("buf"),
-				    U8,
-				    8);
+    // buf : u8[8];
+    program_compile_declaration_array(p,
+				      string_from_cstr("buf"),
+				      U8,
+				      8);
 
-  // buf_len: u32 = (u32) 0;
-  program_compile_declaration(p,
-			      string_from_cstr("buf_len"),
-			      U32);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("buf_len")),
-			     program_expr_append_cast(p,
-						      program_expr_append_value(p,
-										0),
-						      U32));
+    // buf_len: u32 = (u32) 0;
+    program_compile_declaration(p,
+				string_from_cstr("buf_len"),
+				U32);
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("buf_len")),
+			       program_expr_append_cast(p,
+							program_expr_append_value(p,
+										  0),
+							U32));
 
-  // i : u32 = (u32) 4;
-  program_compile_declaration(p,
-			      string_from_cstr("i"),
-			      U32);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("i")),
-			     program_expr_append_cast(p,
-						      program_expr_append_value(p,
-										4),
-						      U32));
+    // i : u32 = (u32) 4;
+    program_compile_declaration(p,
+				string_from_cstr("i"),
+				U32);
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("i")),
+			       program_expr_append_cast(p,
+							program_expr_append_value(p,
+										  4),
+							U32));
 
-  // ptr : u8* = buf + (i - 1);
-  program_compile_declaration(p,
-			      string_from_cstr("ptr"),
-			      PTR(TYPE_U8));
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("ptr")),
-			     program_expr_append_sum(p,
-						     program_expr_append_variable(p,
-										  string_from_cstr("buf")),
-						     program_expr_append_cast(p,
-									      program_expr_append_subtraction(p,
-													      program_expr_append_variable(p,
-																	   string_from_cstr("i")),
-													      program_expr_append_cast(p,
-																       program_expr_append_value(p,
-																				 1),
-																       U32)),
-									      PTR(TYPE_U8))));
+    // ptr : u8* = buf + (i - 1);
+    program_compile_declaration(p,
+				string_from_cstr("ptr"),
+				PTR(TYPE_U8));
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("ptr")),
+			       program_expr_append_sum(p,
+						       program_expr_append_variable(p,
+										    string_from_cstr("buf")),
+						       program_expr_append_cast(p,
+										program_expr_append_subtraction(p,
+														program_expr_append_variable(p,
+																	     string_from_cstr("i")),
+														program_expr_append_cast(p,
+																	 program_expr_append_value(p,
+																				   1),
+																	 U32)),
+										PTR(TYPE_U8))));
 
-  // value : u8 = 65
-  program_compile_declaration(p,
-			      string_from_cstr("value"),
-			      U8);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("value")),
-			     program_expr_append_cast(p,
-						      program_expr_append_value(p,
-										65),
-						      U8));
+    // value : u8 = 65
+    program_compile_declaration(p,
+				string_from_cstr("value"),
+				U8);
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("value")),
+			       program_expr_append_cast(p,
+							program_expr_append_value(p,
+										  65),
+							U8));
   
-  // while(i > 0) {
-  Foo for_loop = program_compile_while_begin(p,
-					     program_expr_append_variable(p,
-									  string_from_cstr("i")),
-					     STMT_IF_TYPE_GREATER,
-					     program_expr_append_cast(p,
-								      program_expr_append_value(p,
-												0),
-								      U32));
+    // while(i > 0) {
+    Foo for_loop = program_compile_while_begin(p,
+					       program_expr_append_variable(p,
+									    string_from_cstr("i")),
+					       STMT_IF_TYPE_GREATER,
+					       program_expr_append_cast(p,
+									program_expr_append_value(p,
+												  0),
+									U32));
 
-  //     *ptr = value;
-  program_compile_assignment(p,
-			     program_expr_append_deref(p,
-						       string_from_cstr("ptr")),
-			     program_expr_append_variable(p,
-							  string_from_cstr("value")));
+    //     *ptr = value;
+    program_compile_assignment(p,
+			       program_expr_append_deref(p,
+							 string_from_cstr("ptr")),
+			       program_expr_append_variable(p,
+							    string_from_cstr("value")));
   
-  //     ptr = ptr - (u8 *) 1
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("ptr")),
-			     program_expr_append_subtraction(p,
-							     program_expr_append_variable(p,
-											  string_from_cstr("ptr")),
-							     program_expr_append_cast(p,
-										      program_expr_append_value(p,
-														1),
-										      PTR(TYPE_U8))));
+    //     ptr = ptr - (u8 *) 1
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("ptr")),
+			       program_expr_append_subtraction(p,
+							       program_expr_append_variable(p,
+											    string_from_cstr("ptr")),
+							       program_expr_append_cast(p,
+											program_expr_append_value(p,
+														  1),
+											PTR(TYPE_U8))));
 
-  //     value = value + (u8) 1
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("value")),
-			     program_expr_append_sum(p,
-						     program_expr_append_variable(p,
-										  string_from_cstr("value")),
-						     program_expr_append_cast(p,
-									      program_expr_append_value(p,
-													1),
-									      U8)));
+    //     value = value + (u8) 1
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("value")),
+			       program_expr_append_sum(p,
+						       program_expr_append_variable(p,
+										    string_from_cstr("value")),
+						       program_expr_append_cast(p,
+										program_expr_append_value(p,
+													  1),
+										U8)));
 
-  //     buf_len = buf_len + (u32) 1
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("buf_len")),
-			     program_expr_append_sum(p,
-						     program_expr_append_variable(p,
-										  string_from_cstr("buf_len")),
-						     program_expr_append_cast(p,
-									      program_expr_append_value(p,
-													1),
-									      U32)));
-  //     i = i - (u32) 1
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("i")),
-			     program_expr_append_subtraction(p,
-							     program_expr_append_variable(p,
-											  string_from_cstr("i")),
-							     program_expr_append_cast(p,
-										      program_expr_append_value(p,
-														1),
-										      U32)));
+    //     buf_len = buf_len + (u32) 1
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("buf_len")),
+			       program_expr_append_sum(p,
+						       program_expr_append_variable(p,
+										    string_from_cstr("buf_len")),
+						       program_expr_append_cast(p,
+										program_expr_append_value(p,
+													  1),
+										U32)));
+    //     i = i - (u32) 1
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("i")),
+			       program_expr_append_subtraction(p,
+							       program_expr_append_variable(p,
+											    string_from_cstr("i")),
+							       program_expr_append_cast(p,
+											program_expr_append_value(p,
+														  1),
+											U32)));
 
-  // }
-  program_compile_while_end(p, for_loop);
+    // }
+    program_compile_while_end(p, for_loop);
   
 
-  // if(buf_len > (u32) 0) {
-  Foo buf_len_positive = program_compile_if_begin(p,
-						  program_expr_append_variable(p,
-									       string_from_cstr("buf_len")),
-						  STMT_IF_TYPE_GREATER,
-						  program_expr_append_cast(p,
-									   program_expr_append_value(p,
-												     0),
-									   U32));
-
-  //     handle : u64* = GetStdHandle((u32) -11);
-  program_compile_declaration(p,
-			      string_from_cstr("handle"),
-			      (Type) { TYPE_U64, 1});
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("handle")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("GetStdHandle"),
-							  program_expr_append_cast(p,
-										  program_expr_append_value(p,
-													    -11),
-										   U32)));
-
-  //     if(handle == (u64*) INVALID_HAMDLE_VALUE) {
-  Foo GetStdHandleFailed = program_compile_if_begin(p,
+    // if(buf_len > (u32) 0) {
+    Foo buf_len_positive = program_compile_if_begin(p,
 						    program_expr_append_variable(p,
-										 string_from_cstr("handle")),
-						    STMT_IF_TYPE_EQUALS,
+										 string_from_cstr("buf_len")),
+						    STMT_IF_TYPE_GREATER,
 						    program_expr_append_cast(p,
 									     program_expr_append_value(p,
-												       (s64) INVALID_HANDLE_VALUE),
-									     PTR(TYPE_U64)));
-  //         ExitProcess(GetLastError());
-  program_compile_funccall(p,
-			   string_from_cstr("ExitProcess"),
-			   program_expr_append_cast(p,
-						    program_expr_append_funccall(p,
-										 string_from_cstr("GetLastError")),
-						    U8));
+												       0),
+									     U32));
+
+    //     handle : u64* = GetStdHandle((u32) -11);
+    program_compile_declaration(p,
+				string_from_cstr("handle"),
+				(Type) { TYPE_U64, 1});
+    program_compile_assignment(p,
+			       program_expr_append_variable(p,
+							    string_from_cstr("handle")),
+			       program_expr_append_funccall(p,
+							    string_from_cstr("GetStdHandle"),
+							    program_expr_append_cast(p,
+										     program_expr_append_value(p,
+													       -11),
+										     U32)));
+
+    //     if(handle == (u64*) INVALID_HAMDLE_VALUE) {
+    Foo GetStdHandleFailed = program_compile_if_begin(p,
+						      program_expr_append_variable(p,
+										   string_from_cstr("handle")),
+						      STMT_IF_TYPE_EQUALS,
+						      program_expr_append_cast(p,
+									       program_expr_append_value(p,
+													 (s64) INVALID_HANDLE_VALUE),
+									       PTR(TYPE_U64)));
+    //         ExitProcess(GetLastError());
+    program_compile_funccall(p,
+			     string_from_cstr("ExitProcess"),
+			     program_expr_append_cast(p,
+						      program_expr_append_funccall(p,
+										   string_from_cstr("GetLastError")),
+						      U8));
 
 
-  //     }
-  program_compile_if_end(p, GetStdHandleFailed);
+    //     }
+    program_compile_if_end(p, GetStdHandleFailed);
   
-  //     written : u32;
-  program_compile_declaration(p,
-			      string_from_cstr("written"),
-			      U32);
+    //     written : u32;
+    program_compile_declaration(p,
+				string_from_cstr("written"),
+				U32);
 
-  //     if(WriteFile(handle, buf, buf_len, &written, (u64 *) NULL) == (u8) 0) {
-  Foo WriteFileFailed = program_compile_if_begin(p,
-						 program_expr_append_funccall(p,
-									      string_from_cstr("WriteFile"),
-									      program_expr_append_variable(p,
-													   string_from_cstr("handle")),
-									      program_expr_append_variable(p,
-													   string_from_cstr("buf")),
-									      program_expr_append_variable(p,
-													   string_from_cstr("buf_len")),
-									      program_expr_append_pointer(p,
-													  string_from_cstr("written")),
-									      program_expr_append_cast(p,
-												       program_expr_append_value(p,
-																 0),
-												       PTR(TYPE_U64))),
-						 STMT_IF_TYPE_EQUALS,
-						 program_expr_append_cast(p,
-									  program_expr_append_value(p,
-												    0),
-									  U8));
+    //     if(WriteFile(handle, buf, buf_len, &written, (u64 *) NULL) == (u8) 0) {
+    Foo WriteFileFailed = program_compile_if_begin(p,
+						   program_expr_append_funccall(p,
+										string_from_cstr("WriteFile"),
+										program_expr_append_variable(p,
+													     string_from_cstr("handle")),
+										program_expr_append_variable(p,
+													     string_from_cstr("buf")),
+										program_expr_append_variable(p,
+													     string_from_cstr("buf_len")),
+										program_expr_append_pointer(p,
+													    string_from_cstr("written")),
+										program_expr_append_cast(p,
+													 program_expr_append_value(p,
+																   0),
+													 PTR(TYPE_U64))),
+						   STMT_IF_TYPE_EQUALS,
+						   program_expr_append_cast(p,
+									    program_expr_append_value(p,
+												      0),
+									    U8));
 
-  //         ExitProcess(GetLastError());
-  program_compile_funccall(p,
-			   string_from_cstr("ExitProcess"),
-			   program_expr_append_cast(p,
-						    program_expr_append_funccall(p,
-										 string_from_cstr("GetLastError")),
-						    U8));
+    //         ExitProcess(GetLastError());
+    program_compile_funccall(p,
+			     string_from_cstr("ExitProcess"),
+			     program_expr_append_cast(p,
+						      program_expr_append_funccall(p,
+										   string_from_cstr("GetLastError")),
+						      U8));
   
-  //     }
-  program_compile_if_end(p, WriteFileFailed);
+    //     }
+    program_compile_if_end(p, WriteFileFailed);
 
-  // }
-  program_compile_if_end(p, buf_len_positive);
-}
-
-// TODO:
-//     functions
-//     type checking
-
-//     remove unnecassary instructions
-
-int main() {
-
-  Program program = {0};
-
-  /*
-    u64* CreateFileA(
-    u8* fileName,
-    u32 desiredAccess,
-    u32 sharedMode,
-    u64* securiyAttributes,
-    u32 creationDisposition,
-    u32 flagsAndAttributes,
-    u64* templateFile);
-  */
-
-  Function createFileA = {0};
-  createFileA.return_type = PTR(TYPE_U64);
-  createFileA.name = string_from_cstr("CreateFileA");
-  da_append(&createFileA.params, ((Param) {
-	.type = PTR(TYPE_U8),
-	.name = string_from_cstr("fileName"),
-      }));
-  da_append(&createFileA.params, ((Param) {
-	.type = U32,
-	.name = string_from_cstr("desiredAccess"),
-      }));
-  da_append(&createFileA.params, ((Param) {
-	.type = U32,
-	.name = string_from_cstr("sharedMode"),
-      }));
-  da_append(&createFileA.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("securityAttributes"),
-      }));
-  da_append(&createFileA.params, ((Param) {
-	.type = U32,
-	.name = string_from_cstr("createDisposition"),
-      }));
-  da_append(&createFileA.params, ((Param) {
-	.type = U32,
-	.name = string_from_cstr("flagsAndAttributes"),
-      }));
-  da_append(&createFileA.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("templateFile"),
-      }));
-  da_append(&program.functions, createFileA);
-
-  /*
-    void ExitProcess(u8 exitCode);
-   */
-
-  Function exitProcess = {0};
-  exitProcess.return_type = _VOID;
-  exitProcess.name = string_from_cstr("ExitProcess");
-  da_append(&exitProcess.params, ((Param) {
-	.type = U8,
-	.name = string_from_cstr("exitCode"),
-      }));
-  da_append(&program.functions, exitProcess);
-
-  /*
-    u32 GetLastError();
-   */
-  Function getLastError = {0};
-  getLastError.return_type = U32;
-  getLastError.name = string_from_cstr("GetLastError");
-  da_append(&program.functions, getLastError);
-
-  /*
-    u32 GetFileSize(u64 *file, u32 *high);
-   */
-  Function getFileSize = {0};
-  getFileSize.return_type = U32;
-  getFileSize.name = string_from_cstr("GetFileSize");
-  da_append(&getFileSize.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("file")
-      }));
-  da_append(&getFileSize.params, ((Param) {
-	.type = PTR(TYPE_U32),
-	.name = string_from_cstr("high"),
-      }));
-  da_append(&program.functions, getFileSize);
-
-  /*
-    u64* GetStdHandle(u32 stdHandle);
-   */
-  Function getStdHandle = {0};
-  getStdHandle.return_type = PTR(TYPE_U64);
-  getStdHandle.name = string_from_cstr("GetStdHandle");
-  da_append(&getStdHandle.params, ((Param){
-	.type = U32,
-	.name = string_from_cstr("stdHandle")
-      }));
-  da_append(&program.functions, getStdHandle);
-
-  /*
-    u8 ReadFile(
-    u64* file,
-    u8* buffer,
-    u32 numberOfBytesToRead,
-    u32* numberOfBytesRead,
-    u64* overlapped);
-   */
-  Function readFile = {0};
-  readFile.return_type = U8;
-  readFile.name = string_from_cstr("ReadFile");
-  da_append(&readFile.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("file")
-      }));
-  da_append(&readFile.params, ((Param) {
-	.type = PTR(TYPE_U8),
-	.name = string_from_cstr("buffer")
-      }));  
-  da_append(&readFile.params, ((Param) {
-	.type = U32,
-	.name = string_from_cstr("numberOfBytesToRead")
-      }));
-  da_append(&readFile.params, ((Param) {
-	.type = PTR(TYPE_U32),
-	.name = string_from_cstr("numberOfBytesRead")
-      }));
-  da_append(&readFile.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("overlapped")
-      }));  
-  da_append(&program.functions, readFile);
-
-  /*
-    u8 WriteFile(
-    u64* file,
-    u8* buffer,
-    u32 numberOfBytesToWrite,
-    u32* numberOfBytesWritten,
-    u64* overlapped);
-   */
-  Function writeFile = {0};
-  writeFile.return_type = U8;
-  writeFile.name = string_from_cstr("WriteFile");
-  da_append(&writeFile.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("file")
-      }));
-  da_append(&writeFile.params, ((Param) {
-	.type = PTR(TYPE_U8),
-	.name = string_from_cstr("buffer")
-      }));  
-  da_append(&writeFile.params, ((Param) {
-	.type = U32,
-	.name = string_from_cstr("numberOfBytesToWrite")
-      }));
-  da_append(&writeFile.params, ((Param) {
-	.type = PTR(TYPE_U32),
-	.name = string_from_cstr("numberOfBytesWritten")
-      }));
-  da_append(&writeFile.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("overlapped")
-      }));  
-  da_append(&program.functions, writeFile);
-
-  /*
-    u8 CloseHandle(u64 *object);
-   */
-  Function closeHandle = {0};
-  closeHandle.return_type = U8;
-  closeHandle.name = string_from_cstr("CloseHandle");
-  da_append(&closeHandle.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("object"),
-      }));
-  da_append(&program.functions, closeHandle);
-
-  /*
-    u64 *GetProcessHeap();
-   */
-  Function getProcessHeap = {0};
-  getProcessHeap.return_type  = PTR(TYPE_U64);
-  getProcessHeap.name = string_from_cstr("GetProcessHeap");
-  da_append(&program.functions, getProcessHeap);
-
-  /*
-    u8* HeapAlloc(u64 *heap,
-    u32 flags,
-    u64 bytes);
-   */
-  Function heapAlloc = {0};
-  heapAlloc.return_type = PTR(TYPE_U8);
-  heapAlloc.name = string_from_cstr("HeapAlloc");
-  da_append(&heapAlloc.params, ((Param) {
-	.type = PTR(TYPE_U64),
-	.name = string_from_cstr("heap")
-      }));
-  da_append(&heapAlloc.params, ((Param) {
-	.type = U32,
-	.name = string_from_cstr("flags")
-      }));
-  da_append(&heapAlloc.params, ((Param) {
-	.type = U64,
-	.name = string_from_cstr("bytes")
-      }));
-  da_append(&program.functions, heapAlloc);
-    
-  //Program program = struct_example_program();
-  dcba_program(&program);
-  //slurp_file_program(&program);
-  //buffered_slurp_file_program(&program);
-  
-  string_builder sb = {0};
-  program_append(&program, &sb);
-  printf("%.*s", (int) sb.len, sb.data);
-
-  if(!io_write_file("main.asm", (u8 *) sb.data, sb.len)) {
-    return 1;
+    // }
+    program_compile_if_end(p, buf_len_positive);
   }
 
+  // TODO:
+  //     functions
+  //     type checking
 
-  return 0;
-}
+  //     remove unnecassary instructions
+
+  int main() {
+
+    Program program = {0};
+
+    /*
+      u64* CreateFileA(
+      u8* fileName,
+      u32 desiredAccess,
+      u32 sharedMode,
+      u64* securiyAttributes,
+      u32 creationDisposition,
+      u32 flagsAndAttributes,
+      u64* templateFile);
+    */
+
+    Function createFileA = {0};
+    createFileA.return_type = PTR(TYPE_U64);
+    createFileA.name = string_from_cstr("CreateFileA");
+    da_append(&createFileA.params, ((Param) {
+	  .type = PTR(TYPE_U8),
+	  .name = string_from_cstr("fileName"),
+	}));
+    da_append(&createFileA.params, ((Param) {
+	  .type = U32,
+	  .name = string_from_cstr("desiredAccess"),
+	}));
+    da_append(&createFileA.params, ((Param) {
+	  .type = U32,
+	  .name = string_from_cstr("sharedMode"),
+	}));
+    da_append(&createFileA.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("securityAttributes"),
+	}));
+    da_append(&createFileA.params, ((Param) {
+	  .type = U32,
+	  .name = string_from_cstr("createDisposition"),
+	}));
+    da_append(&createFileA.params, ((Param) {
+	  .type = U32,
+	  .name = string_from_cstr("flagsAndAttributes"),
+	}));
+    da_append(&createFileA.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("templateFile"),
+	}));
+    da_append(&program.functions, createFileA);
+
+    /*
+      void ExitProcess(u8 exitCode);
+    */
+
+    Function exitProcess = {0};
+    exitProcess.return_type = _VOID;
+    exitProcess.name = string_from_cstr("ExitProcess");
+    da_append(&exitProcess.params, ((Param) {
+	  .type = U8,
+	  .name = string_from_cstr("exitCode"),
+	}));
+    da_append(&program.functions, exitProcess);
+
+    /*
+      u32 GetLastError();
+    */
+    Function getLastError = {0};
+    getLastError.return_type = U32;
+    getLastError.name = string_from_cstr("GetLastError");
+    da_append(&program.functions, getLastError);
+
+    /*
+      u32 GetFileSize(u64 *file, u32 *high);
+    */
+    Function getFileSize = {0};
+    getFileSize.return_type = U32;
+    getFileSize.name = string_from_cstr("GetFileSize");
+    da_append(&getFileSize.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("file")
+	}));
+    da_append(&getFileSize.params, ((Param) {
+	  .type = PTR(TYPE_U32),
+	  .name = string_from_cstr("high"),
+	}));
+    da_append(&program.functions, getFileSize);
+
+    /*
+      u64* GetStdHandle(u32 stdHandle);
+    */
+    Function getStdHandle = {0};
+    getStdHandle.return_type = PTR(TYPE_U64);
+    getStdHandle.name = string_from_cstr("GetStdHandle");
+    da_append(&getStdHandle.params, ((Param){
+	  .type = U32,
+	  .name = string_from_cstr("stdHandle")
+	}));
+    da_append(&program.functions, getStdHandle);
+
+    /*
+      u8 ReadFile(
+      u64* file,
+      u8* buffer,
+      u32 numberOfBytesToRead,
+      u32* numberOfBytesRead,
+      u64* overlapped);
+    */
+    Function readFile = {0};
+    readFile.return_type = U8;
+    readFile.name = string_from_cstr("ReadFile");
+    da_append(&readFile.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("file")
+	}));
+    da_append(&readFile.params, ((Param) {
+	  .type = PTR(TYPE_U8),
+	  .name = string_from_cstr("buffer")
+	}));  
+    da_append(&readFile.params, ((Param) {
+	  .type = U32,
+	  .name = string_from_cstr("numberOfBytesToRead")
+	}));
+    da_append(&readFile.params, ((Param) {
+	  .type = PTR(TYPE_U32),
+	  .name = string_from_cstr("numberOfBytesRead")
+	}));
+    da_append(&readFile.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("overlapped")
+	}));  
+    da_append(&program.functions, readFile);
+
+    /*
+      u8 WriteFile(
+      u64* file,
+      u8* buffer,
+      u32 numberOfBytesToWrite,
+      u32* numberOfBytesWritten,
+      u64* overlapped);
+    */
+    Function writeFile = {0};
+    writeFile.return_type = U8;
+    writeFile.name = string_from_cstr("WriteFile");
+    da_append(&writeFile.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("file")
+	}));
+    da_append(&writeFile.params, ((Param) {
+	  .type = PTR(TYPE_U8),
+	  .name = string_from_cstr("buffer")
+	}));  
+    da_append(&writeFile.params, ((Param) {
+	  .type = U32,
+	  .name = string_from_cstr("numberOfBytesToWrite")
+	}));
+    da_append(&writeFile.params, ((Param) {
+	  .type = PTR(TYPE_U32),
+	  .name = string_from_cstr("numberOfBytesWritten")
+	}));
+    da_append(&writeFile.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("overlapped")
+	}));  
+    da_append(&program.functions, writeFile);
+
+    /*
+      u8 CloseHandle(u64 *object);
+    */
+    Function closeHandle = {0};
+    closeHandle.return_type = U8;
+    closeHandle.name = string_from_cstr("CloseHandle");
+    da_append(&closeHandle.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("object"),
+	}));
+    da_append(&program.functions, closeHandle);
+
+    /*
+      u64 *GetProcessHeap();
+    */
+    Function getProcessHeap = {0};
+    getProcessHeap.return_type  = PTR(TYPE_U64);
+    getProcessHeap.name = string_from_cstr("GetProcessHeap");
+    da_append(&program.functions, getProcessHeap);
+
+    /*
+      u8* HeapAlloc(u64 *heap,
+      u32 flags,
+      u64 bytes);
+    */
+    Function heapAlloc = {0};
+    heapAlloc.return_type = PTR(TYPE_U8);
+    heapAlloc.name = string_from_cstr("HeapAlloc");
+    da_append(&heapAlloc.params, ((Param) {
+	  .type = PTR(TYPE_U64),
+	  .name = string_from_cstr("heap")
+	}));
+    da_append(&heapAlloc.params, ((Param) {
+	  .type = U32,
+	  .name = string_from_cstr("flags")
+	}));
+    da_append(&heapAlloc.params, ((Param) {
+	  .type = U64,
+	  .name = string_from_cstr("bytes")
+	}));
+    da_append(&program.functions, heapAlloc);
+    
+    struct_example_program(&program);
+    //dcba_program(&program);
+    //slurp_file_program(&program);
+    //buffered_slurp_file_program(&program);
+  
+    string_builder sb = {0};
+    program_append(&program, &sb);
+    printf("%.*s", (int) sb.len, sb.data);
+
+    if(!io_write_file("main.asm", (u8 *) sb.data, sb.len)) {
+      return 1;
+    }
+
+
+    return 0;
+  }
