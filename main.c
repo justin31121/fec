@@ -1,9 +1,5 @@
 #include <stdio.h>
-#include <limits.h>
 #include <assert.h>
-
-// https://en.wikibooks.org/wiki/X86_Assembly/X86_Architecture
-// https://en.wikipedia.org/wiki/X86_instruction_listings
 
 #define STRING_IMPLEMENTATION
 #include "_string.h"
@@ -41,8 +37,6 @@ typedef enum{
   VALUE_TYPE_WORD,
   VALUE_TYPE_CONSTANT,
 }Value_Type;
-
-
 
 char *REGISTER_NAMES[][4] = {
   { "rax", "eax", "ax", "al" },
@@ -102,6 +96,18 @@ typedef enum {
   SIZE_NONE,
 }Size;
 
+Size size_of_s64(s64 val) {
+  if(val < CHAR_MAX) {
+    return SIZE_BYTE;
+  } else if(val < SHRT_MAX) {
+    return SIZE_WORD;
+  } else if(val < INT_MAX) {
+    return SIZE_DWORD;
+  } else {
+    return SIZE_QWORD;
+  }  
+}
+
 const char *SIZE_NAMES[] = {
   "byte", "word", "dword", "qword"
 };
@@ -121,19 +127,6 @@ u64 size_in_bytes(Size size) {
   panic("unimplemented size_type");
 }
 
-// TODO: i am not sure, if this is right
-Size size_of_s64(s64 val) {
-  if(val < CHAR_MAX) {
-    return SIZE_BYTE;
-  } else if(val < SHRT_MAX) {
-    return SIZE_WORD;
-  } else if(val < INT_MAX) {
-    return SIZE_DWORD;
-  } else {
-    return SIZE_QWORD;
-  }  
-}
-
 typedef enum {
   INSTR_TYPE_NONE = 0,
   INSTR_TYPE_MOV,
@@ -150,6 +143,9 @@ typedef enum {
   INSTR_TYPE_JE,
   INSTR_TYPE_LABEL,
   INSTR_TYPE_LEA,
+  INSTR_TYPE_RET,
+  INSTR_TYPE_PUSH,
+  INSTR_TYPE_POP,
 }Instr_Type;
 
 typedef struct{
@@ -173,6 +169,9 @@ typedef struct{
 #define JE(l) ((Instr) { .type = INSTR_TYPE_JE, .lhs = (l), .size = (0)  })
 #define JMP(l) ((Instr) { .type = INSTR_TYPE_JMP, .lhs = (l), .size = (0)  })
 #define LABEL(l) ((Instr) { .type = INSTR_TYPE_LABEL, .lhs = (l), .size = (0)  })
+#define RET ((Instr) { .type = INSTR_TYPE_RET, .size = (0) })
+#define PUSH(l) ((Instr) { .type = INSTR_TYPE_PUSH, .lhs = (l), .size = (0) })
+#define POP(l) ((Instr) { .type = INSTR_TYPE_POP, .lhs = (l), .size = (0) })
 
 void instr_append(Instr* instr, string_builder *sb) {
   Value lhs = instr->lhs;
@@ -550,6 +549,44 @@ void instr_append(Instr* instr, string_builder *sb) {
     }
     
   } break;
+
+  case INSTR_TYPE_RET: {
+
+    string_builder_appendf(sb, "        ret\n");
+    
+  } break;
+
+  case INSTR_TYPE_PUSH: {
+
+    switch(lhs.type) {
+
+    case VALUE_TYPE_REGISTER: {
+      string_builder_appendf(sb, "        push %s\n",
+			     REGISTER_NAMES[lhs.as.sval][0]);
+    } break;
+
+      
+    default:
+      panic("unimplemented lhs_type");
+    }
+    
+  } break;
+
+  case INSTR_TYPE_POP: {
+
+    switch(lhs.type) {
+
+    case VALUE_TYPE_REGISTER: {
+      string_builder_appendf(sb, "        pop %s\n",
+			     REGISTER_NAMES[lhs.as.sval][0]);
+    } break;
+      
+    default:
+      panic("unimplemented lhs_type");
+    }
+    
+  } break;
+
         
   default:
     panic("Unimplemented instr->type");
@@ -561,12 +598,6 @@ typedef struct{
   u64 cap;
   u64 len;
 }Instrs;
-
-void instrs_append(Instrs *instrs, string_builder *sb) {
-  for(u64 i=0;i<instrs->len;i++) {
-    instr_append(&instrs->data[i], sb);
-  }
-}
 
 typedef enum{
   TYPE_NONE = 0,
@@ -598,14 +629,64 @@ typedef struct{
   // WHEN type == TYPE_STRUCT THEN struct_index  => index into 'Structure* structs'
 }Type;
 
-#define type_fmt "{ type :: %d, ptr_degree :: %u, struct_index :: %u }"
-#define type_arg(t) (t).type, (t).ptr_degree, (t).struct_index
+Type type_deref(Type type) {
+  return (Type) { type.type, type.ptr_degree - 1 };
+}
+
+Type type_ptr(Type type) {
+  return (Type) { type.type, type.ptr_degree + 1 };
+}
 
 bool type_equal(Type a, Type b) {
   return a.type == b.type &&
     a.ptr_degree == b.ptr_degree &&
     a.struct_index == b.struct_index;
 }
+
+#define type_fmt "{ type :: %d, ptr_degree :: %u, struct_index :: %u }"
+#define type_arg(t) (t).type, (t).ptr_degree, (t).struct_index
+
+Size type_size(Type type) {
+  
+  if(type.ptr_degree > 0) {
+    
+    return SIZE_QWORD;
+  } else {
+    
+    switch(type.type) {
+
+    case TYPE_U64:
+      return SIZE_QWORD;
+
+    case TYPE_U8:
+      return SIZE_BYTE;
+
+    case TYPE_U32:
+      return SIZE_DWORD;
+
+    case TYPE_S64:
+      return SIZE_QWORD;
+      
+    case TYPE_STRUCT:
+      panic("Cannot infer size of type without program");
+
+    }
+    
+    panic("unimplemented type: %d", type.type);
+  }
+  
+}
+
+typedef struct{
+  Type type;
+  string name;
+}Param;
+
+typedef struct{
+  Param *data;
+  u64 len;
+  u64 cap;
+}Params;
 
 #define FUNCCALL_ARGS_CAP 8
 
@@ -650,6 +731,78 @@ struct Constant{
   
 };
 
+void constant_append(Constant *c, u64 k, string_builder *sb) {
+
+  switch(c->type) {
+
+  case CONSTANT_TYPE_CSTR: {
+
+    string_builder_appendf(sb, "        ;; CONSTANT_STRING\n");
+    string s = string_from_cstr(c->as.cstrval);
+    string copy = s;
+    string line;
+    string_builder_appendf(sb, "        ;;     value=\"");
+    int i = 0;
+    while(string_chop_by(&s, "\n", &line)) {
+      if(i++ == 0) {
+	string_builder_appendf(sb, str_fmt"\n", str_arg(line));
+      } else {
+	string_builder_appendf(sb, "        ;;            "str_fmt"\n", str_arg(line));
+      }
+    }
+    s = copy;
+    sb->len = sb->len - 1;
+    string_builder_appendf(sb, "\"\n");
+        
+    string_builder_appendf(sb, "constant%llu: db ", k);
+    for(u64 j=0;j<s.len;j++) {
+      string_builder_appendf(sb, "%u", s.data[j]);
+      if(j != s.len - 1) {
+	string_builder_appendc(sb, ",");
+      }
+    }
+    string_builder_appendc(sb, ",0");    
+
+    string_builder_appendf(sb, "\n");
+    
+  } break;
+
+  case CONSTANT_TYPE_S64: {
+
+    string_builder_appendf(sb, "        ;; CONSTANT_S64\n");
+    string_builder_appendf(sb, "        ;;     value=%lld\n", c->as.sval);
+    
+    
+    string_builder_appendf(sb, "%%define constant%llu %lld\n",
+			   k, c->as.sval);
+    
+  } break;
+    
+  default: {
+    panic("unimplemented constant_type");
+  } break;
+  }
+
+  
+}
+
+#define BATCH_SIZE 4
+
+typedef struct{
+  Constant *data;
+  u64 len;
+  u64 cap;
+}Constants;
+
+u64 constants_append_cstr(Constants *cs, const char *cstr) {
+  da_append(cs, ((Constant) {
+	.type = CONSTANT_TYPE_CSTR,
+	.as.cstrval = cstr
+      }));
+  
+  return cs->len - 1;
+}
+
 typedef struct{
   Expr *lhs;
   Expr *rhs;
@@ -676,49 +829,134 @@ struct Expr{
   }as;
 };
 
-Size type_size(Type type) {
+typedef struct Exprs Exprs;
+struct Exprs{
+  Expr *data;
+  u64 len;  
+  Exprs *next;
+};
+
+Expr *exprs_append(Exprs *es) {
   
-  if(type.ptr_degree > 0) {
+  if(es->len == 0) {
+    es->data = malloc(sizeof(Expr) * BATCH_SIZE);
+    assert(es->data);
     
-    return SIZE_QWORD;
-  } else {
+    es->next = malloc(sizeof(Exprs));
+    assert(es->next);
+    memset(es->next, 0, sizeof(Exprs));
     
-    switch(type.type) {
+  } else if(es->len >= BATCH_SIZE) {    
+    return exprs_append(es->next);
+  }
 
-    case TYPE_U64:
-      return SIZE_QWORD;
+  return &es->data[es->len++];
+}
 
-    case TYPE_U8:
-      return SIZE_BYTE;
+Expr *exprs_append_value(Exprs *es, s64 value) {
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_VALUE;
+  e->as.sval = value;
 
-    case TYPE_U32:
-      return SIZE_DWORD;
+  return e;
+}
 
-    case TYPE_S64:
-      return SIZE_QWORD;
-      
-    case TYPE_STRUCT:
-      panic("Cannot infer size of type without program");
+Expr *exprs_append_cast(Exprs *es, Expr *expr, Type to_type) {
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_CAST;
+  e->as.cast = (Expr_Cast) { expr, to_type };
 
+  return e;
+}
+
+Expr *exprs_append_variable(Exprs *es, string name) {
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_VARIABLE;
+  e->as.strings.fst = name;
+
+  return e;
+ 
+}
+
+Expr *exprs_append_constant(Exprs *es, u64 index) {
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_CONSTANT;
+  e->as.sval = (s64) index;
+
+  return e;
+}
+
+Expr *exprs_append_pointer(Exprs *es, string name) {
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_VARIABLE_PTR;
+  e->as.strings.fst = name;
+  
+  return e;
+}
+
+Expr *exprs_append_sum(Exprs *es, Expr *lhs, Expr *rhs) {
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_SUM;
+  e->as.bin_op = (Expr_Bin_Op) { lhs, rhs };
+
+  return e;
+}
+
+Expr *exprs_append_sub(Exprs *es, Expr *lhs, Expr *rhs) {
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_SUBTRACTION;
+  e->as.bin_op = (Expr_Bin_Op) { lhs, rhs };
+
+  return e;
+}
+
+#define exprs_append_funccall(exprs, name, ...)				\
+  exprs_append_funccall_impl((exprs), (name), __VA_ARGS__, NULL)
+
+Expr* exprs_append_funccall_impl(Exprs *es, string name, ...) {
+
+  Expr_Funccall funccall;
+  funccall.name = name;
+  
+  va_list args;
+  va_start(args, name);
+
+  funccall.args_len = 0;
+  for(;;) {
+
+    Expr *arg = va_arg(args, Expr *);
+    if(arg == NULL) {
+      break;
+    }
+
+    if(funccall.args_len >= sizeof(funccall.args)/sizeof(funccall.args[0])) {
+      panic("argument overflow");
     }
     
-    panic("unimplemented type: %d", type.type);
+    funccall.args[funccall.args_len++] = arg;
   }
   
-}
+  va_end(args);
 
-Type type_ptr(Type type) {
-  return (Type) { type.type, type.ptr_degree + 1 };
-}
-
-Type type_deref(Type type) {
-  return (Type) { type.type, type.ptr_degree - 1 };
+  Expr *e = exprs_append(es);
+  
+  e->type = EXPR_TYPE_FUNCCALL;
+  e->as.funccall = funccall;
+  
+  return e;
 }
 
 typedef struct{
   string name;
   Type type;
-  u64 off;
+  s64 off;
 }Var;
 
 typedef struct{
@@ -742,164 +980,162 @@ Var *vars_find(Vars *vars, string name) {
   
 }
 
-typedef struct{
-  Constant *data;
-  u64 len;
-  u64 cap;
-}Constants;
-
-u64 constants_append_cstr(Constants *c, const char *cstr) {
-  da_append(c, ((Constant) {
-	.type = CONSTANT_TYPE_CSTR,
-	.as.cstrval = cstr
-      }));
-  
-  return c->len - 1;
-}
-
-u64 constants_append_s64(Constants *c, s64 value) {
-  da_append(c, ((Constant) {
-	.type = CONSTANT_TYPE_S64,
-	.as.sval = value
-      }));
-  
-  return c->len - 1;
-}
-
-void constants_append(Constants *constants, string_builder *sb) {
-  for(u64 k=0;k<constants->len;k++) {
-
-    Constant *c = &constants->data[k];
-    
-    switch(c->type) {
-
-    case CONSTANT_TYPE_CSTR: {
-
-      string_builder_appendf(sb, "        ;; CONSTANT_STRING\n");
-      string s = string_from_cstr(c->as.cstrval);
-      string copy = s;
-      string line;
-      string_builder_appendf(sb, "        ;;     value=\"");
-      int i = 0;
-      while(string_chop_by(&s, "\n", &line)) {
-	if(i++ == 0) {
-	  string_builder_appendf(sb, str_fmt"\n", str_arg(line));
-	} else {
-	  string_builder_appendf(sb, "        ;;            "str_fmt"\n", str_arg(line));
-	}
-      }
-      s = copy;
-      sb->len = sb->len - 1;
-      string_builder_appendf(sb, "\"\n");
-    
-    
-      string_builder_appendf(sb, "constant%llu: db ", k);
-      for(u64 j=0;j<s.len;j++) {
-	string_builder_appendf(sb, "%u", s.data[j]);
-	if(j != s.len - 1) {
-	  string_builder_appendc(sb, ",");
-	}
-      }
-      string_builder_appendc(sb, ",0");    
-
-      string_builder_appendf(sb, "\n");
-    
-    } break;
-
-    case CONSTANT_TYPE_S64: {
-
-      string_builder_appendf(sb, "        ;; CONSTANT_S64\n");
-      string_builder_appendf(sb, "        ;;     value=%lld\n", c->as.sval);
-    
-    
-      string_builder_appendf(sb, "%%define constant%llu %lld\n",
-			     k, c->as.sval);
-    
-    } break;
-    
-    default: {
-      panic("unimplemented constant_type");
-    } break;
-    }
-
-  }
-}
-
-typedef struct{
-  string *data;
-  u64 len;
-  u64 cap;
-}strings;
-
-void strings_append_if_not_contains(strings *ss, string s) {
-  for(u64 i=0;i<ss->len;i++) {
-    if(string_eq(ss->data[i], s)) {
-      return;
-    }
-  }
-
-  da_append(ss, s);
-}
+typedef enum{
+  STMT_TYPE_NONE = 0,
+  STMT_TYPE_FUNCCALL,
+  STMT_TYPE_DECLARATION,
+  STMT_TYPE_ASSIGNMENT,
+  STMT_TYPE_IF,
+  STMT_TYPE_RETURN,
+}Stmt_Type;
 
 typedef struct{
   string name;
   Type type;
-}Structure_Field;
+}Stmt_Declaration;
 
 typedef struct{
-  Structure_Field *data;
+  Expr *lhs;
+  Expr *rhs;
+}Stmt_Assignment;
+
+typedef struct Stmts Stmts;
+
+typedef enum {
+  STMT_IF_TYPE_NONE = 0,
+  STMT_IF_TYPE_EQUALS,
+}Stmt_If_Type;
+
+typedef struct{
+  Expr *lhs;
+  Stmt_If_Type op;
+  Expr *rhs;
+  Stmts *body;
+}Stmt_If;
+
+typedef struct{
+  Stmt_Type type;
+  union{
+    Expr *expr;
+    Expr_Funccall funccall;
+    Stmt_Declaration declaration;
+    Stmt_Assignment assignment;
+    Stmt_If iff;    
+  }as;
+}Stmt;
+
+struct Stmts{
+  Stmt *data;
   u64 len;
   u64 cap;
-}Structure_Fields;
+};
 
-Structure_Field *structure_fields_find(Structure_Fields *fields, string name) {
-  for(u64 i=0;i<fields->len;i++) {
-    Structure_Field *f = &fields->data[i];
-    if(string_eq(f->name, name)) {
-      return f;
+void stmts_append_declaration(Stmts *ss, string name, Type type) {
+
+  Stmt_Declaration declaration = { .name = name, .type = type };
+  
+  da_append(ss, ((Stmt) {
+	.type = STMT_TYPE_DECLARATION,
+	.as.declaration = declaration,
+      }));  
+}
+
+void stmts_append_assignment(Stmts *ss, Expr *lhs, Expr *rhs) {
+
+  Stmt_Assignment assignment = { .lhs = lhs, .rhs = rhs };
+  
+  da_append(ss, ((Stmt) {
+	.type = STMT_TYPE_ASSIGNMENT,
+	.as.assignment = assignment,
+      }));    
+}
+
+void stmts_append_if(Stmts *ss, Expr *lhs, Stmt_If_Type op, Expr *rhs, Stmts *body) {
+
+  Stmt_If iff = { .lhs = lhs, .op = op, .rhs = rhs , .body = body };
+
+  da_append(ss, ((Stmt) {
+	.type = STMT_TYPE_IF,
+	.as.iff = iff,
+      }));    
+
+}
+
+void stmts_append_return(Stmts *ss, Expr *expr) {
+  
+  da_append(ss, ((Stmt) {
+	.type = STMT_TYPE_RETURN,
+	.as.expr = expr,
+      }));
+  
+}
+  
+#define stmts_append_funccall(exprs, name, ...)				\
+  stmts_append_funccall_impl((exprs), (name), __VA_ARGS__, NULL)
+
+void stmts_append_funccall_impl(Stmts *ss, string name, ...) {
+
+  Expr_Funccall funccall;
+  funccall.name = name;
+  
+  va_list args;
+  va_start(args, name);
+
+  funccall.args_len = 0;
+  for(;;) {
+
+    Expr *arg = va_arg(args, Expr *);
+    if(arg == NULL) {
+      break;
     }
+
+    if(funccall.args_len >= sizeof(funccall.args)/sizeof(funccall.args[0])) {
+      panic("argument overflow");
+    }
+    
+    funccall.args[funccall.args_len++] = arg;
+  }
+  
+  va_end(args);
+
+  da_append(ss, ((Stmt) {
+	.type = STMT_TYPE_FUNCCALL,
+	.as.funccall = funccall
+      }));
+}
+
+typedef struct Stmtss Stmtss;
+struct Stmtss{
+  Stmts *data;
+  u64 len;  
+  Stmtss *next;
+};
+
+Stmts *stmtss_append(Stmtss *sss) {
+  
+  if(sss->len == 0) {
+    sss->data = malloc(sizeof(Stmts) * BATCH_SIZE);
+    assert(sss->data);
+    
+    sss->next = malloc(sizeof(Stmtss));
+    assert(sss->next);
+    memset(sss->next, 0, sizeof(Stmtss));
+    
+  } else if(sss->len >= BATCH_SIZE) {    
+    return stmtss_append(sss->next);
   }
 
-  return NULL;
+  return &sss->data[sss->len++];
 }
 
 typedef struct{
-  string name;
-  Structure_Fields fields;
-}Structure;
-
-typedef struct{
-  Structure *data;
-  u64 len;
-  u64 cap;
-}Structures;
-
-Structure *structures_find(Structures *structs, string name) {
-  for(u64 i=0;i<structs->len;i++) {
-    Structure *s = &structs->data[i];
-    if(string_eq(s->name, name)) {
-      return s;
-    }
-  }
-
-  return NULL;
-}
-
-typedef struct{
-  Type type;
-  string name;
-}Param;
-
-typedef struct{
-  Param *data;
-  u64 len;
-  u64 cap;
-}Params;
-
-typedef struct{
-  string name;
   Type return_type;
-  Params params;  
+  string name;
+  Params params;
+
+  boolean external;
+
+  Stmts stmts;
 }Function;
 
 typedef struct{
@@ -921,166 +1157,6 @@ Function *functions_find(Functions *fs, string name) {
   return NULL;
 }
 
-typedef struct{
-  Expr expr_pool[16];
-  u64 expr_pool_count;
-
-  Structures structs;
-  Functions functions;
-  Constants constants;
-
-  Vars vars;
-  Instrs instrs;
-
-  u64 label_count;
-  u64 stack_ptr;
-}Program;
-
-bool program_type_check(Program *p, Expr *lhs, Expr *rhs, Type *type);
-
-Type expr_to_type(Program *p, Expr *e) {
-
-  switch(e->type) {
-
-  case EXPR_TYPE_CAST:
-    return e->as.cast.to_type;
-
-  case EXPR_TYPE_VALUE:
-    return S64;
-
-  case EXPR_TYPE_VARIABLE_DEREF: {
-
-    string name = e->as.strings.fst;
-
-    Var *var = vars_find(&p->vars, name);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
-    }
-
-    if(var->type.ptr_degree <= 0) {
-      panic("can not derefence type");
-    }
-
-    return type_deref(var->type);
-    
-  } break;
-    
-  case EXPR_TYPE_VARIABLE_PTR: {
-
-    string name = e->as.strings.fst;
-
-    Var *var = vars_find(&p->vars, name);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
-    }
-
-    return type_ptr(var->type);
-    
-  } break;
-
-  case EXPR_TYPE_STRUCT_FIELD: {
-
-    string name = e->as.strings.fst;
-    string field_name = e->as.strings.snd;
-
-    Var *var = vars_find(&p->vars, name);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
-    }
-    assert(var->type.type == TYPE_STRUCT && var->type.struct_index >= 0);
-    Structure *structure = &p->structs.data[var->type.struct_index];
-
-    Structure_Field *field = structure_fields_find(&structure->fields, field_name);    
-    if(!field) {
-      panic("structure: \""str_fmt"\" has no field named: \""str_fmt"\"\n",
-	    str_arg(structure->name), str_arg(field_name));
-    }
-
-    return field->type;
-    
-  } break;
-
-  case EXPR_TYPE_VARIABLE: {
-
-    string name = e->as.strings.fst;
-
-    Var *var = vars_find(&p->vars, name);
-    if(!var) {
-      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
-    }
-
-    return var->type;
-    
-  } break;
-
-  case EXPR_TYPE_SUM: {
-
-    Expr *lhs = e->as.bin_op.lhs;    
-    Expr *rhs = e->as.bin_op.rhs;
-
-    Type type;
-    if(!program_type_check(p, lhs, rhs, &type)) {
-      panic("Can not add expressions with different types");
-    }
-
-    return type;
-    
-  } break;    
-    
-  case EXPR_TYPE_SUBTRACTION: {
-
-    Expr *lhs = e->as.bin_op.lhs;
-    Expr *rhs = e->as.bin_op.rhs;
-
-    Type type;
-    if(!program_type_check(p, lhs, rhs, &type)) {
-      panic("Can not subtract expressions with different types");
-    }
-
-    return type;
-    
-  } break;
-
-  case EXPR_TYPE_FUNCCALL: {
-
-    string name = e->as.funccall.name;
-      
-    Function *f = functions_find(&p->functions, name);
-    if(f == NULL) {
-      panic("Can not find function with the name: '"str_fmt"'\n", str_arg(name));
-    }
-
-    return f->return_type;
-    
-  } break;
-
-  case EXPR_TYPE_CONSTANT: {
-    Constant *c = &p->constants.data[e->as.sval];
-
-    switch(c->type) {
-      
-    case CONSTANT_TYPE_CSTR:
-      return PTR(TYPE_U8);
-
-    case CONSTANT_TYPE_S64:
-      return S64;
-    }
-
-    panic("unimplemented constant_type");
-    
-  } break;
-    
-  }
-
-  panic("unimplemented expr_type: %d", e->type);
-}
-
-// if compiling EXPR_TYPE_ does
-// involve touching registers => false
-
-// if not => true
-
-// RAX and RBX are excluded
 bool expr_is_static(Expr *e) {
   
   switch(e->type) {
@@ -1114,340 +1190,15 @@ bool expr_is_static(Expr *e) {
   panic("unimplemented expr_type");
 }
 
+Type expr_to_type(Expr *e, Vars *vars, Functions *fs, Constants *cs);
 
-Expr *program_expr_append(Program *p) {
-  if(p->expr_pool_count >= sizeof(p->expr_pool)/sizeof(p->expr_pool[0])) {
-    panic("expr_pool overflow");
-  }
-  return &p->expr_pool[p->expr_pool_count++];
-}
+bool type_check(Expr *lhs, Expr *rhs, Type *type,
+		Vars *vs, Functions *fs, Constants *cs) {
 
-Expr *program_expr_append_value(Program *p, s64 value) {
-  Expr *e = program_expr_append(p);
+  Type lhs_type = expr_to_type(lhs, vs, fs, cs);
+  Type rhs_type = expr_to_type(rhs, vs, fs, cs);
   
-  e->type = EXPR_TYPE_VALUE;
-  e->as.sval = value;
-
-  return e;
-}
-
-Expr *program_expr_append_cast(Program *p, Expr *expr, Type to_type) {
-  Expr *e = program_expr_append(p);
-  
-  e->type = EXPR_TYPE_CAST;
-  e->as.cast = (Expr_Cast) { expr, to_type };
-
-  return e;
-}
-
-Expr *program_expr_append_subtraction(Program *p, Expr *lhs, Expr *rhs) {
-
-  Expr *e = program_expr_append(p);
-  
-  e->type = EXPR_TYPE_SUBTRACTION;
-  e->as.bin_op = (Expr_Bin_Op) { lhs, rhs };
-
-  return e;
-}
-
-Expr *program_expr_append_sum(Program *p, Expr *lhs, Expr *rhs) {
-
-  Expr *e = program_expr_append(p);
-  
-  e->type = EXPR_TYPE_SUM;
-  e->as.bin_op = (Expr_Bin_Op) { lhs, rhs };
-
-  return e;
-}
-
-Expr *program_expr_append_variable(Program *p, string name) {
-  Expr *e = program_expr_append(p);
-  
-  e->type = EXPR_TYPE_VARIABLE;
-  e->as.strings.fst = name;
-  
-  return e;
-}
-
-Expr *program_expr_append_deref(Program *p, string name) {
-  Expr *e = program_expr_append(p);
-  
-  e->type = EXPR_TYPE_VARIABLE_DEREF;
-  e->as.strings.fst = name;
-  
-  return e;
-}
-
-Expr *program_expr_append_struct_field(Program *p, string name, string field_name) {
-  Expr *e = program_expr_append(p);
-  
-  e->type = EXPR_TYPE_STRUCT_FIELD;
-  e->as.strings = (Expr_Strings) { name, field_name };
-  
-  return e;
-}
-
-Expr *program_expr_append_pointer(Program *p, string name) {
-  Expr *e = program_expr_append(p);
-  
-  e->type = EXPR_TYPE_VARIABLE_PTR;
-  e->as.strings.fst = name;
-  
-  return e;
-}
-
-#define program_expr_append_funccall(exprs, name, ...)			\
-  program_expr_append_funccall_impl((exprs), (name), __VA_ARGS__, NULL)
-
-Expr *program_expr_append_funccall_impl(Program *p, string name, ...) {
-  
-  Expr_Funccall funccall;
-  funccall.name = name;
-  
-  va_list args;
-  va_start(args, name);
-
-  funccall.args_len = 0;
-  for(;;) {
-
-    Expr *arg = va_arg(args, Expr *);
-    if(arg == NULL) {
-      break;
-    }
-
-    if(funccall.args_len >= sizeof(funccall.args)/sizeof(funccall.args[0])) {
-      panic("argument overflow");
-    }
-    
-    funccall.args[funccall.args_len++] = arg;
-  }
-  
-  va_end(args);
-
-  Expr *e = program_expr_append(p);
-  e->type = EXPR_TYPE_FUNCCALL;
-  e->as.funccall = funccall;
-  
-  return e;
-}
-
-Expr *program_expr_append_constant(Program *p, u64 index) {
-  
-  Expr *e = program_expr_append(p);
-  e->type = EXPR_TYPE_CONSTANT;
-  e->as.sval = (s64) index;
-
-  return e;
-}
-
-void program_append(Program *p, string_builder *sb) {
-
-  string_builder_appendf(sb,
-			 "        global main\n");
-
-  for(u64 i=0;i<p->functions.len;i++) {
-    string_builder_appendf(sb,
-			   "        extern "str_fmt"\n", str_arg(p->functions.data[i].name));
-  }
-
-  if(p->constants.len > 0) {
-    string_builder_appendc(sb, "\n");
-    string_builder_appendc(sb, "        section .data\n");    
-
-    constants_append(&p->constants, sb);
-
-    string_builder_appendc(sb, "\n");
-  }
-  
-  string_builder_appendf(sb,
-			 "        section .text\n"
-			 "main:\n");
-
-  if(p->stack_ptr != 0) {
-    da_append(&p->instrs, ADD(RSP, LITERAL(p->stack_ptr), SIZE_QWORD));
-  }
-  instrs_append(&p->instrs, sb);
-
-
-  string_builder_appendf(sb,
-			 "        mov rcx, 0\n"
-			 "        sub rsp, 40\n"
-			 "        call ExitProcess\n");
-
-}
-
-void program_compile_declaration(Program *p,
-				 string name,
-				 Type type) {
-  if(vars_find(&p->vars, name)) {
-    panic("variable already declared");
-  }
-
-  Size size = type_size(type);
-  u64 n = size_in_bytes(size);
-
-  da_append(&p->instrs, SUB(RSP, LITERAL(n), SIZE_QWORD));
-  p->stack_ptr += n;
-
-  Var var;
-  var.name = name;
-  var.type = type;
-  var.off  = p->stack_ptr;
-  
-  da_append(&p->vars, var);
-
-  
-  p->expr_pool_count = 0;
-}
-
-void program_compile_declaration_array(Program *p,
-				       string name,
-				       Type type,
-				       u64 n) {
-  if(vars_find(&p->vars, name)) {
-    panic("variable already declared");
-  }
-
-  Size size = type_size(type);
-  Type ptr_type = type_ptr(type);
-  Size size_ptr = type_size(ptr_type);
-  
-  u64 n_ptr = size_in_bytes(size_ptr);
-  u64 ns = n * size_in_bytes(size);
-  
-  da_append(&p->instrs, SUB(RSP, LITERAL(ns + n_ptr), SIZE_QWORD));
-  da_append(&p->instrs, LEA(RAX, RSP_OFF(n_ptr)));
-  da_append(&p->instrs, MOV(RSP_OFF(0), RAX, size_ptr));
-  p->stack_ptr += ns + n_ptr;
-
-  Var var;
-  var.name = name;
-  var.type = ptr_type;
-  var.off  = p->stack_ptr;
-  da_append(&p->vars, var);
-  
-  p->expr_pool_count = 0;
-}
-
-void program_compile_declaration_struct(Program *p,
-					string name,
-					string struct_name) {
-
-  Structure *structure = structures_find(&p->structs, struct_name);
-  if(!structure) {
-    panic("variable already declared");
-  }
-  
-  if(vars_find(&p->vars, name)) {
-    panic("variable already declared");
-  }
-
-  u64 size = 0;
-  for(u64 i=0;i<structure->fields.len;i++) {
-    Structure_Field *field = &structure->fields.data[i];
-    size += size_in_bytes(type_size(field->type));
-  }
-
-  da_append(&p->instrs, SUB(RSP, LITERAL(size), SIZE_QWORD));
-  p->stack_ptr += size;
-
-  Var var;
-  var.name = name;
-  var.type = STRUCT((u32)
-		    (((unsigned char *) structure - (unsigned char *) p->structs.data) / sizeof(Structure)));
-  var.off  = p->stack_ptr;
-  da_append(&p->vars, var);
-  
-  p->expr_pool_count = 0;
-}
-
-u64 program_structure_off(Program *p, Var *var, string field_name, Type *out_type) {
-
-  assert(var->type.type == TYPE_STRUCT && var->type.struct_index >= 0);
-  Structure *structure = &p->structs.data[var->type.struct_index];
-
-  Structure_Field *field = structure_fields_find(&structure->fields, field_name);
-  if(!field) {
-    panic("structure: \""str_fmt"\" has no field named: \""str_fmt"\"\n",
-	  str_arg(structure->name), str_arg(field_name));
-  }
-  if(out_type) *out_type = field->type;
-  u64 field_index = (u64)
-    (((unsigned char *) field - (unsigned char *) structure->fields.data) / sizeof(Structure_Field));
-
-  u64 off = 0;
-  for(u64 i=0;i<field_index;i++) {
-    Structure_Field *sub_field = &structure->fields.data[i];
-    off += size_in_bytes(type_size(sub_field->type));
-  }
-
-  return off;
-}
-
-Value program_expr_location(Program *p, Expr *e, Type *out_type) {
-
-  string name = e->as.strings.fst;
-  string field_name = e->as.strings.snd;
-  
-  Var *var = vars_find(&p->vars, name);
-  if(!var) {
-    panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
-  }  
-
-  Value result;
-  switch(e->type) {
-
-  case EXPR_TYPE_VARIABLE: {
-    result = RSP_OFF(p->stack_ptr - var->off);
-  } break;
-
-  case EXPR_TYPE_VARIABLE_PTR: {
-    result = RSP_OFF(p->stack_ptr - var->off);
-  } break;
-
-  case EXPR_TYPE_STRUCT_FIELD: {
-    
-    if(var->type.type != TYPE_STRUCT) {
-      panic("variable with the name: \""str_fmt"\" is not a structure\n", str_arg(name));
-    }
-    
-    result = RSP_OFF(p->stack_ptr - var->off + program_structure_off(p, var, field_name, NULL));
-  } break;
-
-  case EXPR_TYPE_VARIABLE_DEREF: {
-    // TODO: deref var->type and update 'type'
-    
-    // TODO: Maybe check that the pointer is actually 8 bytes long
-    Size size = SIZE_QWORD;
-    
-    da_append(&p->instrs, MOV(RAX, RSP_OFF(p->stack_ptr - var->off), size));
-    result = RAX_OFF(0);    
-  } break;
-    
-  default:
-    panic("unimplemented expr_type: %d", e->type);
-  }
-
-  if(out_type) {
-    *out_type = expr_to_type(p, e);
-  }
-
-  return result;
-}
-
-Type program_funccall_compile(Program *p, Expr_Funccall *funccall);
-
-void program_compile_smart(Program *p,
-			   Expr *lhs, Value lhs_loc,
-			   Expr *rhs, Value rhs_loc,
-			   Size size);
-
-bool program_type_check(Program *p, Expr *lhs, Expr *rhs, Type *type) {
-
-  Type lhs_type = expr_to_type(p, lhs);
-  Type rhs_type = expr_to_type(p, rhs);
-  
-  bool okay = type_equal(lhs_type, rhs_type);  
+  bool okay = type_equal(lhs_type, rhs_type);
 
   if(okay) {
     if(type) *type = rhs_type;
@@ -1459,10 +1210,237 @@ bool program_type_check(Program *p, Expr *lhs, Expr *rhs, Type *type) {
   
 }
 
-void program_expr_compile(Program *p,
-			  Expr *e,
-			  Value location,
-			  Size cast_size) {
+Type expr_to_type(Expr *e, Vars *vs, Functions *fs, Constants *cs) {
+  
+  switch(e->type) {
+
+  case EXPR_TYPE_CAST:
+    return e->as.cast.to_type;
+
+  case EXPR_TYPE_VALUE:
+    return S64;
+
+  case EXPR_TYPE_VARIABLE_DEREF: {
+
+    string name = e->as.strings.fst;
+
+    Var *var = vars_find(vs, name);
+    if(!var) {
+      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
+    }
+
+    if(var->type.ptr_degree <= 0) {
+      panic("can not derefence type");
+    }
+
+    return type_deref(var->type);
+    
+  } break;
+    
+  case EXPR_TYPE_VARIABLE_PTR: {
+
+    string name = e->as.strings.fst;
+
+    Var *var = vars_find(vs, name);
+    if(!var) {
+      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
+    }
+
+    return type_ptr(var->type);
+    
+  } break;
+
+    /*
+      case EXPR_TYPE_STRUCT_FIELD: {
+
+      string name = e->as.strings.fst;
+      string field_name = e->as.strings.snd;
+
+      Var *var = vars_find(&p->vs, name);
+      if(!var) {
+      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
+      }
+      assert(var->type.type == TYPE_STRUCT && var->type.struct_index >= 0);
+      Structure *structure = &p->structs.data[var->type.struct_index];
+
+      Structure_Field *field = structure_fields_find(&structure->fields, field_name);    
+      if(!field) {
+      panic("structure: \""str_fmt"\" has no field named: \""str_fmt"\"\n",
+      str_arg(structure->name), str_arg(field_name));
+      }
+
+      return field->type;
+    
+      } break;
+    */
+
+  case EXPR_TYPE_VARIABLE: {
+
+    string name = e->as.strings.fst;
+
+    Var *var = vars_find(vs, name);
+    if(!var) {
+      panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
+    }
+
+    return var->type;
+    
+  } break;
+
+  case EXPR_TYPE_SUM: {
+
+    Expr *lhs = e->as.bin_op.lhs;    
+    Expr *rhs = e->as.bin_op.rhs;
+
+    Type type;
+    if(!type_check(lhs, rhs, &type, vs, fs, cs)) {
+      panic("Can not add expressions with different types");
+    }
+
+    return type;
+    
+  } break;    
+    
+  case EXPR_TYPE_SUBTRACTION: {
+
+    Expr *lhs = e->as.bin_op.lhs;
+    Expr *rhs = e->as.bin_op.rhs;
+
+    Type type;
+    if(!type_check(lhs, rhs, &type, vs, fs, cs)) {
+      panic("Can not subtract expressions with different types");
+    }
+
+    return type;
+    
+  } break;
+
+  case EXPR_TYPE_FUNCCALL: {
+
+    string name = e->as.funccall.name;
+      
+    Function *f = functions_find(fs, name);
+    if(f == NULL) {
+      panic("Can not find function with the name: '"str_fmt"'\n", str_arg(name));
+    }
+
+    return f->return_type;
+    
+  } break;
+
+  case EXPR_TYPE_CONSTANT: {
+    Constant *c = &cs->data[e->as.sval];
+
+    switch(c->type) {
+      
+    case CONSTANT_TYPE_CSTR:
+      return PTR(TYPE_U8);
+
+    case CONSTANT_TYPE_S64:
+      return S64;
+    }
+
+    panic("unimplemented constant_type");
+    
+  } break;
+    
+  }
+
+  panic("unimplemented expr_type: %d", e->type);
+
+}
+
+Type funccall_compile(Expr_Funccall *funccall, Instrs *is, u64 *stack_ptr, Vars *vs, Functions *fs, Constants *cs);
+
+Value expr_location(Expr *e, Type *out_type,
+		    Instrs *is, u64 *stack_ptr, Vars *vs, Functions *fs, Constants *cs) {
+  
+  string name = e->as.strings.fst;
+  string field_name = e->as.strings.snd;
+  
+  Var *var = vars_find(vs, name);
+  if(!var) {
+    panic("can not find variable with the name: \""str_fmt"\"\n", str_arg(name));
+  }  
+
+  Value result;
+  switch(e->type) {
+
+  case EXPR_TYPE_VARIABLE: {
+    result = RSP_OFF((s64) (*stack_ptr) - var->off);
+  } break;
+
+  case EXPR_TYPE_VARIABLE_PTR: {
+    result = RSP_OFF((s64) (*stack_ptr) - var->off);
+  } break;
+
+  /* case EXPR_TYPE_STRUCT_FIELD: { */
+    
+  /*   if(var->type.type != TYPE_STRUCT) { */
+  /*     panic("variable with the name: \""str_fmt"\" is not a structure\n", str_arg(name)); */
+  /*   } */
+    
+  /*   result = RSP_OFF((*stack_ptr) - var->off + structure_off(var, field_name, NULL)); */
+  /* } break; */
+
+  case EXPR_TYPE_VARIABLE_DEREF: {
+    // TODO: deref var->type and update 'type'
+    
+    // TODO: Maybe check that the pointer is actually 8 bytes long
+    Size size = SIZE_QWORD;
+    
+    da_append(is, MOV(RAX, RSP_OFF((s64) (*stack_ptr) - var->off), size));
+    result = RAX_OFF(0);
+  } break;
+    
+  default:
+    panic("unimplemented expr_type: %d", e->type);
+  }
+
+  if(out_type) {
+    *out_type = expr_to_type(e, vs, fs, cs);
+  }
+
+  return result;
+
+}
+
+void expr_compile(Expr *e, Value location, Size cast_size,
+		  Instrs *is, u64 *stack_ptr, Vars *vs, Functions *fs, Constants *cs);
+
+void expr_compile_smart(Expr *lhs, Value lhs_loc,
+			Expr *rhs, Value rhs_loc,
+			Size size,
+			Instrs *is, u64 *stack_ptr, Vars *vs, Functions *fs, Constants *cs) {
+  
+  bool is_static = expr_is_static(rhs);
+  
+  if(is_static) {
+    expr_compile(lhs, lhs_loc, size,
+		 is, stack_ptr, vs, fs, cs);
+    expr_compile(rhs, rhs_loc, size,
+		 is, stack_ptr, vs, fs, cs);
+  } else {
+    u64 size_bytes = size_in_bytes(size);
+    
+    da_append(is, SUB(RSP, LITERAL(size_bytes), SIZE_QWORD));
+    (*stack_ptr) += size_bytes;
+    expr_compile(lhs, RSP_OFF(0), size,
+		 is, stack_ptr, vs, fs, cs);
+    
+    expr_compile(rhs, rhs_loc, size,
+		 is, stack_ptr, vs, fs, cs);
+    
+    da_append(is, MOV(lhs_loc, RSP_OFF(0), size));
+    da_append(is, ADD(RSP, LITERAL(size_bytes), SIZE_WORD));
+    (*stack_ptr) -= size_bytes;
+    
+  }
+
+}
+
+void expr_compile(Expr *e, Value location, Size cast_size,
+		  Instrs *is, u64 *stack_ptr, Vars *vs, Functions *fs, Constants *cs) {
 
   Value temp;
   if(location.as.sval == 0) { // RAX := 0
@@ -1482,19 +1460,39 @@ void program_expr_compile(Program *p,
     } else {
       size = cast_size;
     }
-    
-    if(location.type == VALUE_TYPE_REGISTER) {
-      da_append(&p->instrs, MOV(location, LITERAL(value), size));
+
+    /* if(location.type == VALUE_TYPE_REGISTER_OFF) { */
+    /*   if(size != SIZE_QWORD) { */
+    /* 	da_append(is, MOV(location, LITERAL(value), size)); */
+    /*   } else { */
+    /* 	da_append(is, MOV(temp, LITERAL(value), size)); */
+    /* 	da_append(is, MOV(location, temp, size)); */
+
+    /*   } */
+      
+    /* } else { */
+    /*   if(location.type == VALUE_TYPE_REGISTER) { */
+    /* 	da_append(is, MOV(location, LITERAL(value), size)); */
+    /*   } else { */
+    /* 	da_append(is, MOV(temp, LITERAL(value), size)); */
+    /* 	da_append(is, MOV(location, temp, size)); */
+    /*   } */
+
+    /* } */
+
+     if(location.type == VALUE_TYPE_REGISTER) {
+      da_append(is, MOV(location, LITERAL(value), size));
     } else {
-      da_append(&p->instrs, MOV(temp, LITERAL(value), size));
-      da_append(&p->instrs, MOV(location, temp, size));
+      da_append(is, MOV(temp, LITERAL(value), size));
+      da_append(is, MOV(location, temp, size));
     }
     
   } break;
 
   case EXPR_TYPE_FUNCCALL: {
 
-    Type type = program_funccall_compile(p, &e->as.funccall);
+    Type type = funccall_compile(&e->as.funccall,
+				 is, stack_ptr, vs, fs, cs);
 
     Size size;
     if(cast_size == SIZE_NONE) {
@@ -1503,17 +1501,16 @@ void program_expr_compile(Program *p,
       size = cast_size;
     }
     
-    da_append(&p->instrs, MOV(location, RAX, size));
+    da_append(is, MOV(location, RAX, size));
     
   } break;
 
   case EXPR_TYPE_CONSTANT: {
 
-    Constant *c = &p->constants.data[e->as.sval];
+    Constant *c = &cs->data[e->as.sval];
 
     Size value_size;
     if(cast_size == SIZE_NONE) {
-
       
       switch(c->type) {
 
@@ -1534,10 +1531,10 @@ void program_expr_compile(Program *p,
     }
     
     if(location.type == VALUE_TYPE_REGISTER) {
-      da_append(&p->instrs, MOV(location, CONSTANT(e->as.sval), value_size));
+      da_append(is, MOV(location, CONSTANT(e->as.sval), value_size));
     } else {
-      da_append(&p->instrs, MOV(temp, CONSTANT(e->as.sval), value_size));
-      da_append(&p->instrs, MOV(location, temp, value_size));
+      da_append(is, MOV(temp, CONSTANT(e->as.sval), value_size));
+      da_append(is, MOV(location, temp, value_size));
     }
     
   } break;
@@ -1546,7 +1543,8 @@ void program_expr_compile(Program *p,
   case EXPR_TYPE_VARIABLE: {
 
     Type variable_type;
-    Value variable_location = program_expr_location(p, e, &variable_type);
+    Value variable_location = expr_location(e, &variable_type,
+					    is, stack_ptr, vs, fs, cs);
     Size variable_size;
     if(cast_size == SIZE_NONE) {
       variable_size = type_size(variable_type);
@@ -1556,11 +1554,11 @@ void program_expr_compile(Program *p,
 
     if(location.type == VALUE_TYPE_REGISTER_OFF) {
 
-      da_append(&p->instrs, MOV(temp, variable_location, variable_size));
-      da_append(&p->instrs, MOV(location, temp, variable_size));
+      da_append(is, MOV(temp, variable_location, variable_size));
+      da_append(is, MOV(location, temp, variable_size));
       
     } else {
-      da_append(&p->instrs, MOV(location, variable_location, variable_size));
+      da_append(is, MOV(location, variable_location, variable_size));
     }
     
   } break;
@@ -1568,7 +1566,8 @@ void program_expr_compile(Program *p,
   case EXPR_TYPE_VARIABLE_PTR: {
 
     Type variable_type;
-    Value variable_location = program_expr_location(p, e, &variable_type);
+    Value variable_location = expr_location(e, &variable_type,
+					    is, stack_ptr, vs, fs, cs);
         
     Size variable_ptr_size;
     if(cast_size == SIZE_NONE) {
@@ -1579,10 +1578,10 @@ void program_expr_compile(Program *p,
     }
 
     if(location.type == VALUE_TYPE_REGISTER) {
-      da_append(&p->instrs, LEA(location, variable_location));
+      da_append(is, LEA(location, variable_location));
     } else {
-      da_append(&p->instrs, LEA(temp, variable_location));
-      da_append(&p->instrs, MOV(location, temp, variable_ptr_size));
+      da_append(is, LEA(temp, variable_location));
+      da_append(is, MOV(location, temp, variable_ptr_size));
     }    
     
   } break;
@@ -1593,7 +1592,8 @@ void program_expr_compile(Program *p,
     Expr *rhs = e->as.bin_op.rhs;
 
     Type type;
-    if(!program_type_check(p, lhs, rhs, &type)) {
+    if(!type_check(lhs, rhs, &type,
+		   vs, fs, cs)) {
       panic("Can not subtract expressions with different types");
     }
     
@@ -1604,32 +1604,35 @@ void program_expr_compile(Program *p,
       size = cast_size;
     }
 
-    program_compile_smart(p,
-			  lhs, RAX,
-			  rhs, RBX,
-			  type_size(type));
+    expr_compile_smart(lhs, RAX,
+		       rhs, RBX,
+		       type_size(type),
+		       is, stack_ptr, vs, fs, cs);
     
-    da_append(&p->instrs, SUB(RAX, RBX, size));
-    da_append(&p->instrs, MOV(location, RAX, size));
+    da_append(is, SUB(RAX, RBX, size));
+    da_append(is, MOV(location, RAX, size));
     
   } break;
 
   case EXPR_TYPE_CAST: {
 
-    Type type = expr_to_type(p, e->as.cast.expr);
+    Type type = expr_to_type(e->as.cast.expr, vs, fs, cs);
     Size size = type_size(type);
 
     Type to_cast_type = e->as.cast.to_type;
     Size to_cast_size = type_size(to_cast_type);
 
     if(size == to_cast_size) {
-      program_expr_compile(p, e->as.cast.expr, location, to_cast_size);
+      expr_compile(e->as.cast.expr, location, to_cast_size,
+		   is, stack_ptr, vs, fs, cs);
     } else if(size > to_cast_size) {
-      program_expr_compile(p, e->as.cast.expr, location, to_cast_size);
+      expr_compile(e->as.cast.expr, location, to_cast_size,
+		   is, stack_ptr, vs, fs, cs);
     } else  { // size < to_cast_size
-      da_append(&p->instrs, MOV(temp, LITERAL(0), SIZE_QWORD));
-      program_expr_compile(p, e->as.cast.expr, temp, size);
-      da_append(&p->instrs, MOV(location, temp, to_cast_size));
+      da_append(is, MOV(temp, LITERAL(0), SIZE_QWORD));
+      expr_compile(e->as.cast.expr, temp, size,
+		   is, stack_ptr, vs, fs, cs);
+      da_append(is, MOV(location, temp, to_cast_size));
     }        
     
   } break;
@@ -1640,7 +1643,8 @@ void program_expr_compile(Program *p,
     Expr *rhs = e->as.bin_op.rhs;
     
     Type type;
-    if(!program_type_check(p, lhs, rhs, &type)) {
+    if(!type_check(lhs, rhs, &type,
+		   vs, fs, cs)) {
       panic("Can not add expressions with different types");
     }
 
@@ -1651,13 +1655,13 @@ void program_expr_compile(Program *p,
       size = cast_size;
     }
 
-    program_compile_smart(p,
-			  lhs, RAX,
-			  rhs, RBX,
-			  type_size(type));
+    expr_compile_smart(lhs, RAX,
+		       rhs, RBX,
+		       type_size(type),
+		       is, stack_ptr, vs, fs, cs);
     
-    da_append(&p->instrs, ADD(RAX, RBX, size));
-    da_append(&p->instrs, MOV(location, RAX, size));
+    da_append(is, ADD(RAX, RBX, size));
+    da_append(is, MOV(location, RAX, size));
     
   } break;
     
@@ -1665,42 +1669,13 @@ void program_expr_compile(Program *p,
     panic("Unimplemented expr->type");
     
   }
+
   
 }
 
-void program_compile_smart(Program *p,
-			   Expr *lhs, Value lhs_loc,
-			   Expr *rhs, Value rhs_loc,
-			   Size size) {
+Type funccall_compile(Expr_Funccall *funccall, Instrs *is, u64 *stack_ptr, Vars *vs, Functions *fs, Constants *cs) {
 
-  bool is_static = expr_is_static(rhs);
-
-  /* printf("program_compile_smart - static=%s, expr_type: %d\n", */
-  /* 	 is_static ? "true" : "false", rhs->type); */
-  
-  if(is_static) {
-    program_expr_compile(p, lhs, lhs_loc, size);
-    program_expr_compile(p, rhs, rhs_loc, size);
-  } else {
-    u64 size_bytes = size_in_bytes(size);
-    
-    da_append(&p->instrs, SUB(RSP, LITERAL(size_bytes), SIZE_QWORD));
-    p->stack_ptr += size_bytes;
-    program_expr_compile(p, lhs, RSP_OFF(0), size);
-    
-    program_expr_compile(p, rhs, rhs_loc, size);
-    
-    da_append(&p->instrs, MOV(lhs_loc, RSP_OFF(0), size));
-    da_append(&p->instrs, ADD(RSP, LITERAL(size_bytes), SIZE_WORD));
-    p->stack_ptr -= size_bytes;
-    
-  }
-
-}
-
-Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
-
-  Function *f = functions_find(&p->functions, funccall->name);
+  Function *f = functions_find(fs, funccall->name);
   if(f == NULL) {
     panic("Can not find function with the name: '"str_fmt"'\n", str_arg(funccall->name));
   }
@@ -1712,7 +1687,7 @@ Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
 
   for(u64 i=0;i<funccall->args_len;i++) {
     Expr *arg = funccall->args[i];
-    Type arg_type = expr_to_type(p, arg);
+    Type arg_type = expr_to_type(arg, vs, fs, cs);
 
     Param *param = &f->params.data[i];
     Type param_type = param->type;
@@ -1728,18 +1703,18 @@ Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
 
   ////////////////////////////////////////////////////////////////////
 
-  u64 stack_ptr_before = p->stack_ptr;
+  u64 stack_ptr_before = *stack_ptr;
 
   s64 shadow_space = funccall->args_len * 8;
   if(shadow_space < 32) {
     shadow_space = 32;
   }
-  s64 alignment = (p->stack_ptr + shadow_space) % 16;
+  s64 alignment = ((*stack_ptr) + shadow_space) % 16;
   if(alignment != 0) {    
     shadow_space += 16 - alignment;
   }
-  p->stack_ptr += shadow_space;
-  da_append(&p->instrs, SUB(RSP, LITERAL(shadow_space), SIZE_QWORD));
+  *stack_ptr += shadow_space;
+  da_append(is, SUB(RSP, LITERAL(shadow_space), SIZE_QWORD));
 
   // calculate argument-expressions and save them in the shadowspace
   for(u64 i=0;i<funccall->args_len;i++) {
@@ -1748,7 +1723,8 @@ Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
     if(expr_is_static(e)) {
       // pass
     } else {
-      program_expr_compile(p, e, RSP_OFF(p->stack_ptr - stack_ptr_before - shadow_space + i  * 8), SIZE_NONE);
+      expr_compile(e, RSP_OFF((*stack_ptr) - stack_ptr_before - shadow_space + i  * 8), SIZE_NONE,
+		   is, stack_ptr, vs, fs, cs);
     }
     
     /* if(e->type == EXPR_TYPE_VARIABLE) { */
@@ -1764,7 +1740,7 @@ Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
   // move the first four arguments out of the shadowspace
   for(u64 i=0;i<funccall->args_len;i++) {
     Expr *e = funccall->args[i];
-    s64 target = (s64) p->stack_ptr - (s64) stack_ptr_before - (s64) shadow_space + i  * 8;
+    s64 target = (s64) (*stack_ptr) - (s64) stack_ptr_before - (s64) shadow_space + i  * 8;
     //s64 target = i  * 8;
 
     Param *param = &f->params.data[i];
@@ -1774,9 +1750,10 @@ Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
     if(i < FASTCALL_REGISTER_COUNT) { // rcx, rdx, r8, r9
 
       if(expr_is_static(e)) {
-	program_expr_compile(p, e, REGISTER(FASTCALL_REGISTERS[i]), SIZE_NONE);
+	expr_compile(e, REGISTER(FASTCALL_REGISTERS[i]), SIZE_NONE,
+		     is, stack_ptr, vs, fs, cs);
       } else {
-	da_append(&p->instrs, MOV(REGISTER(FASTCALL_REGISTERS[i]), RSP_OFF(target), param_size));
+	da_append(is, MOV(REGISTER(FASTCALL_REGISTERS[i]), RSP_OFF(target), param_size));
       }
 
       /* Value source; */
@@ -1790,8 +1767,9 @@ Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
     } else { // push ...
 
       if(expr_is_static(e)) {
-	program_expr_compile(p, e, RAX, SIZE_NONE);
-	da_append(&p->instrs, MOV(RSP_OFF(target), RAX, param_size));
+	expr_compile(e, RAX, SIZE_NONE,
+		     is, stack_ptr, vs, fs, cs);
+	da_append(is, MOV(RSP_OFF(target), RAX, param_size));
       } else {
 	// variable already in the right place
       }
@@ -1807,1045 +1785,737 @@ Type program_funccall_compile(Program *p, Expr_Funccall *funccall) {
       
     }
     
-
-    
   }  
   
-  da_append(&p->instrs, CALL(WORD(funccall->name)));
+  da_append(is, CALL(WORD(funccall->name)));
 
-  da_append(&p->instrs, ADD(RSP, LITERAL(p->stack_ptr - stack_ptr_before), SIZE_QWORD));
-  p->stack_ptr = stack_ptr_before;
+  da_append(is, ADD(RSP, LITERAL((*stack_ptr) - stack_ptr_before), SIZE_QWORD));
+  *stack_ptr = stack_ptr_before;
 
   return f->return_type;
 }
 
-void program_compile_assignment(Program *p,
-				Expr *lhs,
-				Expr *rhs) {
+// Return true, if stmt returns and write output into 'out_type'
+bool stmt_compile(Type return_type,
+		  Stmt *s,
+		  Instrs *is,
+		  u64 *stack_ptr,
+		  u64 *label_count,
+		  Vars *vs,		  
+		  Functions *fs,
+		  Constants *cs,
+		  Type *out_type) {
 
-  if(!program_type_check(p, lhs, rhs, NULL)) {
-    panic("Can not assign expressions with different type");
-  }
+  switch(s->type) {
 
-  Value location = program_expr_location(p, lhs, NULL);
-  program_expr_compile(p, rhs, location, SIZE_NONE);
-  p->expr_pool_count = 0;
-}
+  case STMT_TYPE_FUNCCALL: {
 
-#define program_compile_funccall(p, name, ...)			\
-  program_compile_funccall_impl((p), (name), __VA_ARGS__, NULL)
-
-void program_compile_funccall_impl(Program *p,
-				   string name,
-				   ...) {
-  Expr_Funccall funccall;
-  funccall.name = name;
-  
-  va_list args;
-  va_start(args, name);
-
-  funccall.args_len = 0;
-  for(;;) {
-
-    Expr *arg = va_arg(args, Expr *);
-    if(arg == NULL) {
-      break;
-    }
-
-    if(funccall.args_len >= sizeof(funccall.args)/sizeof(funccall.args[0])) {
-      panic("argument overflow");
-    }
+    // TODO: add warning of unused return_type
+    funccall_compile(&s->as.funccall, is, stack_ptr, vs, fs, cs);
     
-    funccall.args[funccall.args_len++] = arg;
+  } break;
+
+  case STMT_TYPE_DECLARATION: {
+
+    Stmt_Declaration *declaration = &s->as.declaration;
+    
+    u64 n = size_in_bytes(type_size(declaration->type));
+
+    da_append(is, SUB(RSP, LITERAL(n), SIZE_QWORD));
+    *stack_ptr += n;
+  
+    da_append(vs, ((Var) {
+	  .name = declaration->name,
+	  .type = declaration->type,
+	  .off  = (s64) (*stack_ptr),
+	}));
+    
+  } break;
+
+  case STMT_TYPE_ASSIGNMENT: {
+
+    Expr *lhs = s->as.assignment.lhs;
+    Expr *rhs = s->as.assignment.rhs;
+
+    if(!type_check(lhs, rhs, NULL,
+		   vs, fs, cs)) {
+      panic("Can not assign expressions with different type");
+    }
+
+    Value location = expr_location(lhs, NULL,
+				   is, stack_ptr, vs, fs, cs);
+    expr_compile(rhs, location, SIZE_NONE,
+		 is, stack_ptr, vs, fs, cs);
+    
+  } break;
+
+  case STMT_TYPE_IF: {
+
+    Expr *lhs = s->as.iff.lhs;
+    Stmt_If_Type op = s->as.iff.op;
+    Expr *rhs = s->as.iff.rhs;
+
+    Type type;
+    if(!type_check(lhs, rhs, &type,
+		   vs, fs, cs)) {
+      panic("Can compare expressions with different types"); 
+    }
+    Size size = type_size(type);
+      
+    expr_compile_smart(lhs, RAX,
+		       rhs, RBX,
+		       size,
+		       is, stack_ptr, vs, fs, cs);  
+    da_append(is, CMP(RAX, RBX, size));
+
+    u64 stack = *stack_ptr;
+    u64 vars_len = vs->len;
+    u64 label = *label_count;
+    (*label_count) = (*label_count) + 1;
+
+    switch(op) {
+      
+    case STMT_IF_TYPE_EQUALS: {
+      da_append(is, JNE(LITERAL(label)));
+    } break;
+
+    default:
+      panic("Unimplemented stmt_if_type");
+      
+    }    
+
+    Stmts *stmts = s->as.iff.body;
+    bool returned = false;
+    for(u64 i=0;i<stmts->len;i++) {
+
+      if(returned) {
+	panic("Found dead code in if");
+      }
+      
+      if(stmt_compile(return_type,
+		      &stmts->data[i],
+		      is,
+		      stack_ptr,
+		      label_count,
+		      vs,		  
+		      fs,
+		      cs,
+		      out_type)) {
+        returned = true;
+      }
+    }
+
+    vs->len = vars_len;
+
+    if(!returned && (*stack_ptr) != stack) {
+      da_append(is, ADD(RSP, LITERAL((*stack_ptr) - stack), SIZE_QWORD));      
+    }
+    (*stack_ptr) = stack;
+    da_append(is, LABEL(LITERAL(label)));
+
+    // TODO: figure this logic out
+    
+    /* if(do_return) { */
+    /*   return true; */
+    /* } */
+    
+  } break;
+
+  case STMT_TYPE_RETURN: {
+
+    Expr *expr = s->as.expr;
+    Type type = expr_to_type(expr, vs, fs, cs);
+
+    if(!type_equal(type, return_type)) {
+      printf(type_fmt", "type_fmt, type_arg(type), type_arg(return_type));
+      panic("Can not return with a different type");
+    }
+
+    if(type.ptr_degree > 0) {
+      expr_compile(expr, RAX, SIZE_NONE,
+		   is, stack_ptr, vs, fs, cs);
+    } else if(type.type == TYPE_STRUCT) {
+      panic("todo");
+    } else if(type.type == TYPE_VOID) {
+      // pass
+    } else {
+      expr_compile(expr, RAX, SIZE_NONE,
+		   is, stack_ptr, vs, fs, cs);
+    }    
+
+    if((*stack_ptr) > 0) {
+      da_append(is, ADD(RSP, LITERAL((*stack_ptr)), SIZE_QWORD));
+      *stack_ptr = 0;
+    }
+    da_append(is, RET);
+
+    *out_type = type;
+    return true;
+  
+  } break;
+    
+  default:
+    panic("unimplemented stmt_type");
   }
-  
-  va_end(args);
 
-  program_funccall_compile(p, &funccall);
-  
-  p->expr_pool_count = 0;
+  return false;
 }
-
-typedef enum{
-  STMT_IF_TYPE_NONE,
-  STMT_IF_TYPE_EQUALS,
-  STMT_IF_TYPE_NOT_EQUALS,
-  STMT_IF_TYPE_LESS,
-  STMT_IF_TYPE_GREATER_OR_EQUAL,
-  STMT_IF_TYPE_GREATER,
-}Stmt_If_Type;
 
 typedef struct{
-  u64 var_count;
-  u64 stack_ptr;
-  u64 label_index;
-}Foo;
+  Exprs exprs;
+  Stmtss stmtss;
+  Functions functions;
+  Constants constants;
+}Program;
 
-Foo program_compile_if_begin(Program *p,
-			     Expr *lhs,
-			     Stmt_If_Type operand,
-			     Expr *rhs) {
+void program_append(Program *p, string_builder *sb) {
 
-  Type type;
-  if(!program_type_check(p, lhs, rhs, &type)) {
-    panic("Can compare expressions with different types"); 
+  Vars vars = {0};
+  Instrs instrs = {0};
+
+  u64 implementations = 0;
+
+  // constants
+  if(p->constants.len > 0) {
+    string_builder_appendf(sb, "        section .data\n");
   }
-  Size size = type_size(type);
+  for(u64 i=0;i<p->constants.len;i++) {
+    constant_append(&p->constants.data[i], i, sb);
+  }
+
+  // declarations
+  for(u64 i=0;i<p->functions.len;i++) {
+    Function *f = &p->functions.data[i];
+    if(f->external) {
+      string_builder_appendf(sb, "        extern "str_fmt"\n", str_arg(f->name));
+    } else {
+      string_builder_appendf(sb, "        global "str_fmt"\n", str_arg(f->name));
+      implementations++;
+    }
+    
+  }
+
+  // implementations
+  if(implementations > 0) {
+    string_builder_appendf(sb, "        section .text\n");
+  }
+  for(u64 i=0;i<p->functions.len;i++) {
+    Function *f = &p->functions.data[i];
+    if(f->external) {
+      continue;
+    }    
+    string_builder_appendf(sb, ""str_fmt":\n", str_arg(f->name));
+
+    u64 stack_ptr = 0;
+    u64 label_count = 0;
+
+    for(u64 j=0;j<f->params.len && j<FASTCALL_REGISTER_COUNT;j++) {
+      Param *param = &f->params.data[j];
+
+      s64 off = (j + 1) * 8;
+      da_append(&instrs, MOV(RSP_OFF(off), REGISTER(FASTCALL_REGISTERS[j]), SIZE_QWORD));
+      da_append(&vars, ((Var) {
+	    .name = param->name,
+	    .type = param->type,
+	    .off  = -off,
+	  }));
+
+    }
+
+    boolean needs_to_return = !type_equal(f->return_type, _VOID);
+    boolean returned = false;
+    for(u64 j=0;j<f->stmts.len;j++) {
+
+      if(returned) {
+	panic("Remove dead code in function: '"str_fmt"'\n", str_arg(f->name));
+      }
       
-  program_compile_smart(p,
-			lhs, RAX,
-			rhs, RBX,
-			size);  
-  da_append(&p->instrs, CMP(RAX, RBX, size));
-
-  switch(operand) {
-  case STMT_IF_TYPE_EQUALS: {
-    da_append(&p->instrs, JNE(LITERAL(p->label_count)));
-  } break;
-
-  case STMT_IF_TYPE_LESS: {
-    da_append(&p->instrs, JGE(LITERAL(p->label_count)));
-  } break;
-
-  case STMT_IF_TYPE_GREATER_OR_EQUAL: {
-    da_append(&p->instrs, JL(LITERAL(p->label_count)));
-  } break;
-
-  case STMT_IF_TYPE_NOT_EQUALS: {
-    da_append(&p->instrs, JE(LITERAL(p->label_count)));
-  } break;
-
-  case STMT_IF_TYPE_GREATER: {
-    da_append(&p->instrs, JLE(LITERAL(p->label_count)));
-  } break;
+      Type compiled_return_type;
+      bool stmt_returns = stmt_compile(f->return_type,
+				       &f->stmts.data[j],
+				       &instrs,
+				       &stack_ptr,
+				       &label_count,
+				       &vars,
+				       &p->functions,
+				       &p->constants,
+				       &compiled_return_type);
+      if(stmt_returns) {
+	returned = true;
+      }
       
-  default: {
-    panic("unimplemented if_type");
-  } break;
+    }
+    if(needs_to_return && !returned) {
+      panic("Not all paths in function: '"str_fmt"' return", str_arg(f->name));
+    }
+    
+    vars.len = 0;
+    if(type_equal(f->return_type, _VOID)) {
+      if(stack_ptr > 0) {
+	da_append(&instrs, ADD(RSP, LITERAL(stack_ptr), SIZE_QWORD));	   
+      }
+      da_append(&instrs, RET);
+    }
+
+    for(u64 j=0;j<instrs.len;j++) {
+      instr_append(&instrs.data[j], sb);
+    }
+    instrs.len = 0;
+    
   }
   
-  p->expr_pool_count = 0;
-
-  return (Foo) { p->vars.len, p->stack_ptr, p->label_count++ };
 }
 
-void program_compile_if_end(Program *p,
-			    Foo state) {
-
-  p->vars.len = state.var_count;      
-  p->expr_pool_count = 0;
+void appendFunctionsWinApi(Program *p) {
   
-  if(p->stack_ptr != state.stack_ptr) {
-    da_append(&p->instrs, ADD(RSP, LITERAL(p->stack_ptr - state.stack_ptr), SIZE_QWORD));
-    p->stack_ptr = state.stack_ptr;
-  }
-  da_append(&p->instrs, LABEL(LITERAL(state.label_index)));
+  Function exitProcess = {0};
+  exitProcess.external = true;
+  exitProcess.return_type = _VOID;
+  exitProcess.name = string_from_cstr("ExitProcess");
+  da_append(&exitProcess.params, ((Param) {
+	.type = U8,
+	.name = string_from_cstr("exitCode"),
+      }));  
+  da_append(&p->functions, exitProcess);
+
+  Function createFileA = {0};
+  createFileA.external = true;
+  createFileA.return_type = PTR(TYPE_U64);
+  createFileA.name = string_from_cstr("CreateFileA");
+  da_append(&createFileA.params, ((Param) {
+	.type = PTR(TYPE_U8),
+	.name = string_from_cstr("fileName"),
+      }));
+  da_append(&createFileA.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("desiredAccess"),
+      }));
+  da_append(&createFileA.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("sharedMode"),
+      }));
+  da_append(&createFileA.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("securityAttributes"),
+      }));
+  da_append(&createFileA.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("createDisposition"),
+      }));
+  da_append(&createFileA.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("flagsAndAttributes"),
+      }));
+  da_append(&createFileA.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("templateFile"),
+      }));
+  da_append(&p->functions, createFileA);
+
+  Function getLastError = {0};
+  getLastError.external = true;
+  getLastError.return_type = U32;
+  getLastError.name = string_from_cstr("GetLastError");
+  da_append(&p->functions, getLastError);
+
+  Function getProcessHeap = {0};
+  getProcessHeap.external = true;
+  getProcessHeap.return_type  = PTR(TYPE_U64);
+  getProcessHeap.name = string_from_cstr("GetProcessHeap");
+  da_append(&p->functions, getProcessHeap);
+
+  Function getFileSize = {0};
+  getFileSize.external = true;
+  getFileSize.return_type = U32;
+  getFileSize.name = string_from_cstr("GetFileSize");
+  da_append(&getFileSize.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("file")
+      }));
+  da_append(&getFileSize.params, ((Param) {
+	.type = PTR(TYPE_U32),
+	.name = string_from_cstr("high"),
+      }));
+  da_append(&p->functions, getFileSize);
+
+  Function heapAlloc = {0};
+  heapAlloc.external = true;
+  heapAlloc.return_type = PTR(TYPE_U8);
+  heapAlloc.name = string_from_cstr("HeapAlloc");
+  da_append(&heapAlloc.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("heap")
+      }));
+  da_append(&heapAlloc.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("flags")
+      }));
+  da_append(&heapAlloc.params, ((Param) {
+	.type = U64,
+	.name = string_from_cstr("bytes")
+      }));
+  da_append(&p->functions, heapAlloc);
+
+  Function readFile = {0};
+  readFile.external = true;
+  readFile.return_type = U8;
+  readFile.name = string_from_cstr("ReadFile");
+  da_append(&readFile.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("file")
+      }));
+  da_append(&readFile.params, ((Param) {
+	.type = PTR(TYPE_U8),
+	.name = string_from_cstr("buffer")
+      }));  
+  da_append(&readFile.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("numberOfBytesToRead")
+      }));
+  da_append(&readFile.params, ((Param) {
+	.type = PTR(TYPE_U32),
+	.name = string_from_cstr("numberOfBytesRead")
+      }));
+  da_append(&readFile.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("overlapped")
+      }));  
+  da_append(&p->functions, readFile);
+
+  Function writeFile = {0};
+  writeFile.external = true;
+  writeFile.return_type = U8;
+  writeFile.name = string_from_cstr("WriteFile");
+  da_append(&writeFile.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("file")
+      }));
+  da_append(&writeFile.params, ((Param) {
+	.type = PTR(TYPE_U8),
+	.name = string_from_cstr("buffer")
+      }));  
+  da_append(&writeFile.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("numberOfBytesToWrite")
+      }));
+  da_append(&writeFile.params, ((Param) {
+	.type = PTR(TYPE_U32),
+	.name = string_from_cstr("numberOfBytesWritten")
+      }));
+  da_append(&writeFile.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("overlapped")
+      }));  
+  da_append(&p->functions, writeFile);
+
+  Function getStdHandle = {0};
+  getStdHandle.external = true;
+  getStdHandle.return_type = PTR(TYPE_U64);
+  getStdHandle.name = string_from_cstr("GetStdHandle");
+  da_append(&getStdHandle.params, ((Param){
+	.type = U32,
+	.name = string_from_cstr("stdHandle")
+      }));
+  da_append(&p->functions, getStdHandle);
+
+  Function closeHandle = {0};
+  closeHandle.external = true;
+  closeHandle.return_type = U8;
+  closeHandle.name = string_from_cstr("CloseHandle");
+  da_append(&closeHandle.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("object"),
+      }));
+  da_append(&p->functions, closeHandle);
+
+  Function heapFree = {0};
+  heapFree.external = true;
+  heapFree.return_type = U8;
+  heapFree.name = string_from_cstr("HeapFree");
+  da_append(&heapFree.params, ((Param) {
+	.type = PTR(TYPE_U64),
+	.name = string_from_cstr("heap")
+      }));
+  da_append(&heapFree.params, ((Param) {
+	.type = U32,
+	.name = string_from_cstr("flags")
+      }));
+  da_append(&heapFree.params, ((Param) {
+	.type = PTR(TYPE_U8),
+	.name = string_from_cstr("mem")
+      }));
+  da_append(&p->functions, heapFree);
+}
+
+void appendFunctionSub(Program *p) {
+  
+  Function f = {0};
+  f.name = string_from_cstr("sub");
+  f.return_type = U8;
+  da_append(&f.params, ((Param) {
+	.type = U8,
+	.name = string_from_cstr("a")
+      }));
+  da_append(&f.params, ((Param) {
+	.type = U8,
+	.name = string_from_cstr("b")
+      }));
+  
+  Exprs *es = &p->exprs;
+  Stmtss *sss = &p->stmtss;
+  Stmts *ss = &f.stmts;
+
+  // return a - b;
+  stmts_append_return(ss,
+		      exprs_append_sub(es,
+				       exprs_append_variable(es, string_from_cstr("a")),
+				       exprs_append_variable(es, string_from_cstr("b"))));
+
+  da_append(&p->functions, f);
 
 }
 
-Foo program_compile_while_begin(Program *p,
-				Expr *lhs,
-				Stmt_If_Type operand,
-				Expr *rhs) {
-  da_append(&p->instrs, LABEL(LITERAL(p->label_count++)));
+void appendFunctionAdd(Program *p) {
+  
+  Function f = {0};
+  f.name = string_from_cstr("add");
+  f.return_type = U8;
+  da_append(&f.params, ((Param) {
+	.type = U8,
+	.name = string_from_cstr("a")
+      }));
+  da_append(&f.params, ((Param) {
+	.type = U8,
+	.name = string_from_cstr("b")
+      }));
+  
+  Exprs *es = &p->exprs;
+  Stmtss *sss = &p->stmtss;
+  Stmts *ss = &f.stmts;
 
-  return program_compile_if_begin(p, lhs, operand, rhs);
+  // return a + b;
+  stmts_append_return(ss,
+		      exprs_append_sum(es,
+				       exprs_append_variable(es, string_from_cstr("a")),
+				       exprs_append_variable(es, string_from_cstr("b"))));
+
+  da_append(&p->functions, f);
+
 }
 
-void program_compile_while_end(Program *p,
-			       Foo state) {
-  da_append(&p->instrs, JMP(LITERAL(state.label_index - 1)));
-  program_compile_if_end(p, state);
+void appendFunctionFoo(Program *p) {
+
+  Function f = {0};
+  f.name = string_from_cstr("foo");
+  f.return_type = U8;
+  
+  Exprs *es = &p->exprs;
+  Stmtss *sss = &p->stmtss;
+  Stmts *ss = &f.stmts;
+
+  // return 35;
+  stmts_append_return(ss, exprs_append_cast(es, exprs_append_value(es, 35), U8));
+
+  da_append(&p->functions, f);
+
 }
 
-void slurp_file_program(Program *p) {
+void appendFunctionMain(Program *p) {
+
+  Function f = {0};
+  f.name = string_from_cstr("main");
+  f.return_type = _VOID;
+  
+  Exprs *es = &p->exprs;
+  Stmtss *sss = &p->stmtss;
+  Stmts *ss = &f.stmts;
+
+  // if(dump() == 0) {
+  //     Exit(GetLastError());
+  // }
+  Stmts *stmts = stmtss_append(sss);
+  memset(stmts, 0, sizeof(Stmts));
+  stmts_append_funccall(stmts,
+			string_from_cstr("ExitProcess"),
+			exprs_append_cast(es,
+					  exprs_append_funccall(es,
+								string_from_cstr("GetLastError")),
+					  U8));
+  stmts_append_if(ss,
+		  exprs_append_funccall(es,
+					string_from_cstr("dump")),
+		  STMT_IF_TYPE_EQUALS,
+		  exprs_append_cast(es, exprs_append_value(es, 0), U8),
+		  stmts);  
+
+  // Exitprocess(foo());
+  stmts_append_funccall(ss,
+			string_from_cstr("ExitProcess"),
+			exprs_append_funccall(es,
+					      string_from_cstr("sub"),
+					      exprs_append_funccall(es, string_from_cstr("foo")),
+					      exprs_append_cast(es, exprs_append_value(es, 34), U8)
+					      )
+			);
+
+  
+  da_append(&p->functions, f);
+}
+
+void appendFunctionDump(Program *p) {
+
+  Function f = {0};
+  f.name = string_from_cstr("dump");
+  f.return_type = U8;
+  
+  Exprs *es = &p->exprs;
+  Stmtss *sss = &p->stmtss;
+  Stmts *ss = &f.stmts;  
 
   // handle : u64* = CreateFileA("main.asm", (u32) GENERIC_READ, (u32) FILE_SHARE_READ, (u64*) 0, (u32) OPEN_EXISTING, (u32) FILE_ATTRIBUTE_NORMAL, (u64*) NULL);
-  program_compile_declaration(p,
-			      string_from_cstr("handle"),
-			      PTR(TYPE_U64));  
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("handle")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("CreateFileA"),
-							  program_expr_append_constant(p,
-										       constants_append_cstr(&p->constants,
-													     "main.fe")),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, GENERIC_READ),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, FILE_SHARE_READ),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, 0),
-										   PTR(TYPE_U64)),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, OPEN_EXISTING),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, FILE_ATTRIBUTE_NORMAL),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, 0),
-										   PTR(TYPE_U64))));
+  stmts_append_declaration(ss, string_from_cstr("handle"), PTR(TYPE_U64));
+  stmts_append_assignment(ss,
+			  exprs_append_variable(es, string_from_cstr("handle")),
+			  exprs_append_funccall(es,
+						string_from_cstr("CreateFileA"),
+						exprs_append_constant(es, constants_append_cstr(&p->constants, "main.fe")),
+						exprs_append_cast(es, exprs_append_value(es, GENERIC_READ), U32),
+						exprs_append_cast(es, exprs_append_value(es, FILE_SHARE_READ), U32),
+						exprs_append_cast(es, exprs_append_value(es, 0), PTR(TYPE_U64)),
+						exprs_append_cast(es, exprs_append_value(es, OPEN_EXISTING), U32),
+						exprs_append_cast(es, exprs_append_value(es, FILE_ATTRIBUTE_NORMAL), U32),
+						exprs_append_cast(es, exprs_append_value(es, 0), PTR(TYPE_U64))
+						)
+			  );
 
   // if(handle == INVALID_HANDLE_VALUE) {
-  Foo state = program_compile_if_begin(p,
-				       program_expr_append_variable(p,
-								    string_from_cstr("handle")),
-				       STMT_IF_TYPE_EQUALS,
-				       program_expr_append_cast(p,
-								program_expr_append_value(p,
-											  (s64) INVALID_HANDLE_VALUE),
-								PTR(TYPE_U64)));
-  //     error : u32 = GetLastError()
-  program_compile_declaration(p,
-			      string_from_cstr("error"),
-			      U32);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("error")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("GetLastError")));
-
-  //     ExitProcess((u8) error);
-  program_compile_funccall(p,
-			   string_from_cstr("ExitProcess"),
-			   program_expr_append_cast(p,
-						    program_expr_append_variable(p, string_from_cstr("error")),
-						    U8));
-  // }
-  program_compile_if_end(p, state);
-
-  // process_heap : u64* = GetProcessHeap();
-  program_compile_declaration(p,
-			      string_from_cstr("process_heap"),
-			      PTR(TYPE_U64));
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("process_heap")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("GetProcessHeap")));
-
-  // size : u32 = GetFileSize(handle, (u32*) 0);
-  program_compile_declaration(p,
-			      string_from_cstr("size"),
-			      U32);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("size")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("GetFileSize"),
-							  program_expr_append_variable(p,
-										       string_from_cstr("handle")),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p,
-													     0),
-										   PTR(TYPE_U32))));
-
-  // size_big : u64 = (u64) size;
-  program_compile_declaration(p,
-			      string_from_cstr("size_big"),
-			      U64);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("size_big")),
-			     program_expr_append_cast(p,
-						      program_expr_append_variable(p,
-										   string_from_cstr("size")),
-						      U64));
-  
-  // space : u8* = HeapAlloc(process_heap, (u32) 0, (u64) size);
-  program_compile_declaration(p,
-			      string_from_cstr("space"),
-			      PTR(TYPE_U8));
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("space")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("HeapAlloc"),
-							  program_expr_append_variable(p,
-										       string_from_cstr("process_heap")),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p,
-													     0),
-										   U32),	  
-							  program_expr_append_variable(p,
-										       string_from_cstr("size_big"))
-							  ));
-  // written : u32;
-  program_compile_declaration(p,
-			      string_from_cstr("written"),
-			      U32);
-  
-  // ReadFile(handle, space, size, &written, (u64*) 0);
-  program_compile_funccall(p,
-			   string_from_cstr("ReadFile"),
-			   program_expr_append_variable(p,
-							string_from_cstr("handle")),
-			   program_expr_append_variable(p,
-							string_from_cstr("space")),
-			   program_expr_append_variable(p,
-							string_from_cstr("size")),
-			   program_expr_append_pointer(p,
-						       string_from_cstr("written")),
-			   program_expr_append_cast(p,
-						    program_expr_append_value(p,
-									      0),
-						    PTR(TYPE_U64)));
-
-  // WriteFile(GetStdHandle((u32) -11), space, size, &written, (u64) NULL);
-  program_compile_funccall(p,
-			   string_from_cstr("WriteFile"),
-			   program_expr_append_funccall(p,
-							string_from_cstr("GetStdHandle"),
-						        program_expr_append_cast(p,
-										 program_expr_append_value(p,
-													   -11),
-										 U32)),
-			   program_expr_append_variable(p,
-							string_from_cstr("space")),
-			   program_expr_append_variable(p,
-							string_from_cstr("size")),
-			   program_expr_append_pointer(p,
-						       string_from_cstr("written")),
-			   program_expr_append_cast(p,
-						    program_expr_append_value(p,
-									      0),
-						    PTR(TYPE_U64))
-			   );
-  
-  // CloseHandle(handle);
-  program_compile_funccall(p,
-			   string_from_cstr("CloseHandle"),
-			   program_expr_append_variable(p,
-							string_from_cstr("handle")));
-}
-
-void buffered_slurp_file_program(Program *p) {
-
-  // handle : u64*;
-  program_compile_declaration(p,
-			      string_from_cstr("handle"),
-			      PTR(TYPE_U64));
-  
-  // handle = CreateFileA("main.asm", (u32) GENERIC_READ, (u32) FILE_SHARE_READ, (u64*) 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("handle")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("CreateFileA"),
-							  program_expr_append_constant(p,
-										       constants_append_cstr(&p->constants,
-													     "main.fe")),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, GENERIC_READ),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, FILE_SHARE_READ),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, 0),
-										   PTR(TYPE_U64)),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, OPEN_EXISTING),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, FILE_ATTRIBUTE_NORMAL),
-										   U32),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p, 0),
-										   PTR(TYPE_U64))));
-
-  // if(handle == INVALID_HANDLE_VALUE) {
-  Foo state = program_compile_if_begin(p,
-				       program_expr_append_cast(p,
-								program_expr_append_variable(p,
-											     string_from_cstr("handle")),
-							        S64),
-				       STMT_IF_TYPE_EQUALS,
-				       program_expr_append_value(p,
-								 (s64) INVALID_HANDLE_VALUE));
   //     ExitProcess(GetLastError());
-  program_compile_funccall(p,
-			   string_from_cstr("ExitProcess"),
-			   program_expr_append_cast(p,
-						    program_expr_append_funccall(p,
-										 string_from_cstr("GetLastError")),
-						    U8));
   // }
-  program_compile_if_end(p, state);
+  Stmts *error_body = stmtss_append(sss);
+  memset(error_body, 0, sizeof(Stmts));
+  {
+    stmts_append_return(error_body, exprs_append_cast(es, exprs_append_value(es, 0), U8));
+  }
+  stmts_append_if(ss,
+		  exprs_append_variable(es, string_from_cstr("handle")),
+		  STMT_IF_TYPE_EQUALS,
+		  exprs_append_cast(es, exprs_append_value(es, (s64) INVALID_HANDLE_VALUE), PTR(TYPE_U64)),
+		  error_body);
 
-  // size : u32;
-  program_compile_declaration(p,
-			      string_from_cstr("size"),
-			      U32);
+  // process_heap : u64* = GetProcessHeap
+  stmts_append_declaration(ss, string_from_cstr("process_heap"), PTR(TYPE_U64));
+  stmts_append_assignment(ss,
+			  exprs_append_variable(es, string_from_cstr("process_heap")),
+			  exprs_append_funccall(es, string_from_cstr("GetProcessHeap"))
+			  );
+  // if(process_heap == 0) {
+  //     ExitProcess(GetLastError());
+  // }
+  stmts_append_if(ss,
+		  exprs_append_variable(es, string_from_cstr("process_heap")),
+		  STMT_IF_TYPE_EQUALS,
+		  exprs_append_cast(es, exprs_append_value(es, 0), PTR(TYPE_U64)),
+		  error_body);
 
-  // size = GetFileSize(handle, NULL);
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("size")),			     
-			     program_expr_append_funccall(p,
-							  string_from_cstr("GetFileSize"),
-							  program_expr_append_variable(p,
-										       string_from_cstr("handle")),
-							  program_expr_append_cast(p,program_expr_append_value(p,
-													       0),
-										   PTR(TYPE_U32))));
+  // size : u32 = GetFileSize(handle);
+  stmts_append_declaration(ss, string_from_cstr("size"), U32);
+  stmts_append_assignment(ss,
+			  exprs_append_variable(es, string_from_cstr("size")),
+			  exprs_append_funccall(es,
+						string_from_cstr("GetFileSize"),
+						exprs_append_variable(es,
+								      string_from_cstr("handle")),
+						exprs_append_cast(es,
+								  exprs_append_value(es, 0),
+								  PTR(TYPE_U32)))
+			  );  
+  // if(size == INVALID_FILE_SIZE) {
+  //     ExitProcess(GetLastError());
+  // }
+  stmts_append_if(ss,
+		  exprs_append_variable(es, string_from_cstr("size")),
+		  STMT_IF_TYPE_EQUALS,
+		  exprs_append_cast(es, exprs_append_value(es, INVALID_FILE_SIZE), U32),
+		  error_body);
+
+  // space : u8* = HeapAlloc(process_heap, (u32) 0, (u64) size);
+  stmts_append_declaration(ss, string_from_cstr("space"), PTR(TYPE_U8));
+  stmts_append_assignment(ss,
+			  exprs_append_variable(es, string_from_cstr("space")),
+			  exprs_append_funccall(es,
+						string_from_cstr("HeapAlloc"),
+					        exprs_append_variable(es, string_from_cstr("process_heap")),
+						exprs_append_cast(es, exprs_append_value(es, 0), U32),
+						exprs_append_cast(es, exprs_append_variable(es, string_from_cstr("size")), U64))
+			  );
+  // if(space == 0) {
+  //     ExitProcess(GetLastError());
+  // }
+  stmts_append_if(ss,
+		  exprs_append_variable(es, string_from_cstr("space")),
+		  STMT_IF_TYPE_EQUALS,
+		  exprs_append_cast(es, exprs_append_value(es, 0), PTR(TYPE_U8)),
+		  error_body);
 
   // written : u32;
-  program_compile_declaration(p,
-			      string_from_cstr("written"),
-			      U32);
+  stmts_append_declaration(ss, string_from_cstr("written"), U32);  
 
-  s64 buf_size = 2;
-  // buf : u8[8]
-  program_compile_declaration_array(p,
-				    string_from_cstr("buf"),
-				    U8,
-				    buf_size);
+  // ReadFile(handle, space, size, &written, (u64*) 0);
+  stmts_append_funccall(ss,
+			string_from_cstr("ReadFile"),
+			exprs_append_variable(es, string_from_cstr("handle")),
+			exprs_append_variable(es, string_from_cstr("space")),
+			exprs_append_variable(es, string_from_cstr("size")),
+			exprs_append_pointer(es, string_from_cstr("written")),
+			exprs_append_cast(es, exprs_append_value(es, 0), PTR(TYPE_U64)));
 
-  // len : u32;
-  program_compile_declaration(p,
-			      string_from_cstr("len"),
-			      U32);
+  // WriteFile(GetStdHandle((u32) -11), space, size, &written, (u64) 0);
+  stmts_append_funccall(ss,
+			string_from_cstr("WriteFile"),
+		        exprs_append_funccall(es,
+					      string_from_cstr("GetStdHandle"),
+					      exprs_append_cast(es, exprs_append_value(es, -11), U32)),
+			exprs_append_variable(es, string_from_cstr("space")),
+			exprs_append_variable(es, string_from_cstr("size")),
+			exprs_append_pointer(es, string_from_cstr("written")),
+			exprs_append_cast(es, exprs_append_value(es, 0), PTR(TYPE_U64)));
 
-  // stdOutputHandle : u64* = GetStdHandle(-11);
-  program_compile_declaration(p,
-			      string_from_cstr("stdOutputHandle"),
-			      PTR(TYPE_U64));
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("stdOutputHandle")),
-			     program_expr_append_funccall(p,
-							  string_from_cstr("GetStdHandle"),
-							  program_expr_append_cast(p,
-										   program_expr_append_value(p,
-													     -11),
-										   U32)));
-
-  // while(size != 0) {
-  Foo loop_state = program_compile_while_begin(p,
-					       program_expr_append_variable(p,
-									    string_from_cstr("size")),
-					       STMT_IF_TYPE_NOT_EQUALS,
-					       program_expr_append_cast(p,
-									program_expr_append_value(p,
-												  0),
-								        U32));
-
-  //     len = 8;
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("len")),
-			     program_expr_append_cast(p,
-						      program_expr_append_value(p, buf_size),
-						      U32));
-
-  //     if(size < len) {
-  state = program_compile_if_begin(p,
-				   program_expr_append_variable(p,
-								string_from_cstr("size")),
-				   STMT_IF_TYPE_LESS,
-				   program_expr_append_variable(p,
-								string_from_cstr("len")));
-
-
-  //         len = size
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("len")),
-			     program_expr_append_variable(p,
-							  string_from_cstr("size")));
-
-  //     }
-  program_compile_if_end(p, state);
-
-  //     ReadFile(handle, buf, len, &written, NULL);
-  program_compile_funccall(p,
-			   string_from_cstr("ReadFile"),
-			   program_expr_append_variable(p,
-							string_from_cstr("handle")),
-			   program_expr_append_variable(p,
-							string_from_cstr("buf")),
-			   program_expr_append_variable(p,
-							string_from_cstr("len")),
-			   program_expr_append_pointer(p,
-						       string_from_cstr("written")),
-			   program_expr_append_cast(p,
-						    program_expr_append_value(p,
-									      0),
-						    PTR(TYPE_U64)));
-
-  //     size = size - written
-  program_compile_assignment(p,
-			     program_expr_append_variable(p,
-							  string_from_cstr("size")),
-			     program_expr_append_subtraction(p,
-							     program_expr_append_variable(p,
-											  string_from_cstr("size")),							     
-							     program_expr_append_variable(p,
-											  string_from_cstr("written"))));
-
-  //     WriteFile(stdOutputHandle, buf, written, &written, NULL);
-  program_compile_funccall(p,
-			   string_from_cstr("WriteFile"),
-			   program_expr_append_variable(p,
-							string_from_cstr("stdOutputHandle")),
-			   program_expr_append_variable(p,
-							string_from_cstr("buf")),
-			   program_expr_append_variable(p,
-							string_from_cstr("written")),
-			   program_expr_append_cast(p,
-						    program_expr_append_pointer(p,
-										string_from_cstr("written")),
-						    PTR(TYPE_U32)),
-			   program_expr_append_cast(p,
-						    program_expr_append_value(p,
-									      0),
-						    PTR(TYPE_U64))
-			   );
-
-  // }
-  program_compile_while_end(p, loop_state);
+  // HeapFree(process_heap, (u32) 0, space);
+  stmts_append_funccall(ss,
+			string_from_cstr("HeapFree"),
+			exprs_append_variable(es, string_from_cstr("process_heap")),
+		        exprs_append_cast(es, exprs_append_value(es, 0), U32),
+			exprs_append_variable(es, string_from_cstr("space")));
 
   // CloseHandle(handle);
-  program_compile_funccall(p,
-			   string_from_cstr("CloseHandle"),
-			   program_expr_append_variable(p,
-							string_from_cstr("handle")));
+  stmts_append_funccall(ss,
+			string_from_cstr("CloseHandle"),
+			exprs_append_variable(es, string_from_cstr("handle")));
+  
+  // return 1;
+  stmts_append_return(ss, exprs_append_cast(es, exprs_append_value(es, 1), U8));
 
-  // ExitProcess(size);  
-  program_compile_funccall(p,
-			   string_from_cstr("ExitProcess"),
-			   program_expr_append_cast(p,
-						    program_expr_append_variable(p,
-										 string_from_cstr("size")),
-						    U8));  
+  da_append(&p->functions, f);
+  
 }
 
-void struct_example_program(Program *p) {
+int main() {
 
-  /*
-    struct :: string {
-    u8* data;
-    u64 len;
-    }
-  */
-  Structure_Fields string_fields = {0};
-  da_append(&string_fields, ((Structure_Field) {
-	.name = string_from_cstr("data"),
-	.type = PTR(TYPE_U8),
-      }));
-  da_append(&string_fields, ((Structure_Field) {
-	.name = string_from_cstr("len"),
-	.type = TYPE_U64,
-      }));
-  da_append(&p->structs, ((Structure) {
-	.name = string_from_cstr("string"),
-	.fields = string_fields,
-      }));
-
-  // s : string;
-  program_compile_declaration_struct(p,
-				     string_from_cstr("s"),
-				     string_from_cstr("string"));
-
-  // s = "Hello, World!";
-  string s_content = string_from_cstr("Hello, World!\n");
-  program_compile_assignment(p,
-			     program_expr_append_struct_field(p,
-							      string_from_cstr("s"),
-							      string_from_cstr("data")),
-			     program_expr_append_constant(p,
-							  constants_append_cstr(&p->constants,
-										s_content.data)));
-  program_compile_assignment(p,
-			     program_expr_append_struct_field(p,
-							      string_from_cstr("s"),
-							      string_from_cstr("len")),
-			     program_expr_append_cast(p,
-						      program_expr_append_constant(p,
-										   constants_append_s64(&p->constants,
-													s_content.len)),
-						      U64));
-
-  // written : u64;
-  program_compile_declaration(p,
-			      string_from_cstr("written"),
-			      U32);
-
-  // WriteFile(GetStdHandle(-11), s.data, s.len, &written, NULL);
-  program_compile_funccall(p,
-			   string_from_cstr("WriteFile"),
-			   program_expr_append_funccall(p,
-							string_from_cstr("GetStdHandle"),
-						        program_expr_append_cast(p,
-										 program_expr_append_value(p,
-													   -11),
-										 U32)),
-			   program_expr_append_struct_field(p,
-							    string_from_cstr("s"),
-							    string_from_cstr("data")),
-			   program_expr_append_cast(p,
-						    program_expr_append_struct_field(p,
-										     string_from_cstr("s"),
-										     string_from_cstr("len")),
-						    U32),
-			   program_expr_append_pointer(p,
-						       string_from_cstr("written")),
-			   program_expr_append_cast(p,
-						    program_expr_append_value(p,
-											   0),
-						    PTR(TYPE_U64)));
-
-			   }
-
-    void dcba_program(Program *p) {
-
-    // buf : u8[8];
-    program_compile_declaration_array(p,
-				      string_from_cstr("buf"),
-				      U8,
-				      8);
-
-    // buf_len: u32 = (u32) 0;
-    program_compile_declaration(p,
-				string_from_cstr("buf_len"),
-				U32);
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("buf_len")),
-			       program_expr_append_cast(p,
-							program_expr_append_value(p,
-										  0),
-							U32));
-
-    // i : u32 = (u32) 4;
-    program_compile_declaration(p,
-				string_from_cstr("i"),
-				U32);
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("i")),
-			       program_expr_append_cast(p,
-							program_expr_append_value(p,
-										  4),
-							U32));
-
-    // ptr : u8* = buf + (i - 1);
-    program_compile_declaration(p,
-				string_from_cstr("ptr"),
-				PTR(TYPE_U8));
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("ptr")),
-			       program_expr_append_sum(p,
-						       program_expr_append_variable(p,
-										    string_from_cstr("buf")),
-						       program_expr_append_cast(p,
-										program_expr_append_subtraction(p,
-														program_expr_append_variable(p,
-																	     string_from_cstr("i")),
-														program_expr_append_cast(p,
-																	 program_expr_append_value(p,
-																				   1),
-																	 U32)),
-										PTR(TYPE_U8))));
-
-    // value : u8 = 65
-    program_compile_declaration(p,
-				string_from_cstr("value"),
-				U8);
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("value")),
-			       program_expr_append_cast(p,
-							program_expr_append_value(p,
-										  65),
-							U8));
+  Program program = {0};
+  appendFunctionsWinApi(&program);
+  appendFunctionDump(&program);
+  appendFunctionFoo(&program);
+  appendFunctionAdd(&program);
+  appendFunctionMain(&program);
+  appendFunctionSub(&program);
   
-    // while(i > 0) {
-    Foo for_loop = program_compile_while_begin(p,
-					       program_expr_append_variable(p,
-									    string_from_cstr("i")),
-					       STMT_IF_TYPE_GREATER,
-					       program_expr_append_cast(p,
-									program_expr_append_value(p,
-												  0),
-									U32));
+  string_builder sb = {0};  
+  program_append(&program, &sb);
+  printf("%.*s", (int) sb.len, sb.data);
 
-    //     *ptr = value;
-    program_compile_assignment(p,
-			       program_expr_append_deref(p,
-							 string_from_cstr("ptr")),
-			       program_expr_append_variable(p,
-							    string_from_cstr("value")));
-  
-    //     ptr = ptr - (u8 *) 1
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("ptr")),
-			       program_expr_append_subtraction(p,
-							       program_expr_append_variable(p,
-											    string_from_cstr("ptr")),
-							       program_expr_append_cast(p,
-											program_expr_append_value(p,
-														  1),
-											PTR(TYPE_U8))));
-
-    //     value = value + (u8) 1
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("value")),
-			       program_expr_append_sum(p,
-						       program_expr_append_variable(p,
-										    string_from_cstr("value")),
-						       program_expr_append_cast(p,
-										program_expr_append_value(p,
-													  1),
-										U8)));
-
-    //     buf_len = buf_len + (u32) 1
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("buf_len")),
-			       program_expr_append_sum(p,
-						       program_expr_append_variable(p,
-										    string_from_cstr("buf_len")),
-						       program_expr_append_cast(p,
-										program_expr_append_value(p,
-													  1),
-										U32)));
-    //     i = i - (u32) 1
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("i")),
-			       program_expr_append_subtraction(p,
-							       program_expr_append_variable(p,
-											    string_from_cstr("i")),
-							       program_expr_append_cast(p,
-											program_expr_append_value(p,
-														  1),
-											U32)));
-
-    // }
-    program_compile_while_end(p, for_loop);
-  
-
-    // if(buf_len > (u32) 0) {
-    Foo buf_len_positive = program_compile_if_begin(p,
-						    program_expr_append_variable(p,
-										 string_from_cstr("buf_len")),
-						    STMT_IF_TYPE_GREATER,
-						    program_expr_append_cast(p,
-									     program_expr_append_value(p,
-												       0),
-									     U32));
-
-    //     handle : u64* = GetStdHandle((u32) -11);
-    program_compile_declaration(p,
-				string_from_cstr("handle"),
-				(Type) { TYPE_U64, 1});
-    program_compile_assignment(p,
-			       program_expr_append_variable(p,
-							    string_from_cstr("handle")),
-			       program_expr_append_funccall(p,
-							    string_from_cstr("GetStdHandle"),
-							    program_expr_append_cast(p,
-										     program_expr_append_value(p,
-													       -11),
-										     U32)));
-
-    //     if(handle == (u64*) INVALID_HAMDLE_VALUE) {
-    Foo GetStdHandleFailed = program_compile_if_begin(p,
-						      program_expr_append_variable(p,
-										   string_from_cstr("handle")),
-						      STMT_IF_TYPE_EQUALS,
-						      program_expr_append_cast(p,
-									       program_expr_append_value(p,
-													 (s64) INVALID_HANDLE_VALUE),
-									       PTR(TYPE_U64)));
-    //         ExitProcess(GetLastError());
-    program_compile_funccall(p,
-			     string_from_cstr("ExitProcess"),
-			     program_expr_append_cast(p,
-						      program_expr_append_funccall(p,
-										   string_from_cstr("GetLastError")),
-						      U8));
-
-
-    //     }
-    program_compile_if_end(p, GetStdHandleFailed);
-  
-    //     written : u32;
-    program_compile_declaration(p,
-				string_from_cstr("written"),
-				U32);
-
-    //     if(WriteFile(handle, buf, buf_len, &written, (u64 *) NULL) == (u8) 0) {
-    Foo WriteFileFailed = program_compile_if_begin(p,
-						   program_expr_append_funccall(p,
-										string_from_cstr("WriteFile"),
-										program_expr_append_variable(p,
-													     string_from_cstr("handle")),
-										program_expr_append_variable(p,
-													     string_from_cstr("buf")),
-										program_expr_append_variable(p,
-													     string_from_cstr("buf_len")),
-										program_expr_append_pointer(p,
-													    string_from_cstr("written")),
-										program_expr_append_cast(p,
-													 program_expr_append_value(p,
-																   0),
-													 PTR(TYPE_U64))),
-						   STMT_IF_TYPE_EQUALS,
-						   program_expr_append_cast(p,
-									    program_expr_append_value(p,
-												      0),
-									    U8));
-
-    //         ExitProcess(GetLastError());
-    program_compile_funccall(p,
-			     string_from_cstr("ExitProcess"),
-			     program_expr_append_cast(p,
-						      program_expr_append_funccall(p,
-										   string_from_cstr("GetLastError")),
-						      U8));
-  
-    //     }
-    program_compile_if_end(p, WriteFileFailed);
-
-    // }
-    program_compile_if_end(p, buf_len_positive);
+  if(!io_write_file("main.asm", (u8 *) sb.data, sb.len)) {
+    return 1;
   }
-
-  // TODO:
-  //     functions
-  //     type checking
-
-  //     remove unnecassary instructions
-
-  int main() {
-
-    Program program = {0};
-
-    /*
-      u64* CreateFileA(
-      u8* fileName,
-      u32 desiredAccess,
-      u32 sharedMode,
-      u64* securiyAttributes,
-      u32 creationDisposition,
-      u32 flagsAndAttributes,
-      u64* templateFile);
-    */
-
-    Function createFileA = {0};
-    createFileA.return_type = PTR(TYPE_U64);
-    createFileA.name = string_from_cstr("CreateFileA");
-    da_append(&createFileA.params, ((Param) {
-	  .type = PTR(TYPE_U8),
-	  .name = string_from_cstr("fileName"),
-	}));
-    da_append(&createFileA.params, ((Param) {
-	  .type = U32,
-	  .name = string_from_cstr("desiredAccess"),
-	}));
-    da_append(&createFileA.params, ((Param) {
-	  .type = U32,
-	  .name = string_from_cstr("sharedMode"),
-	}));
-    da_append(&createFileA.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("securityAttributes"),
-	}));
-    da_append(&createFileA.params, ((Param) {
-	  .type = U32,
-	  .name = string_from_cstr("createDisposition"),
-	}));
-    da_append(&createFileA.params, ((Param) {
-	  .type = U32,
-	  .name = string_from_cstr("flagsAndAttributes"),
-	}));
-    da_append(&createFileA.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("templateFile"),
-	}));
-    da_append(&program.functions, createFileA);
-
-    /*
-      void ExitProcess(u8 exitCode);
-    */
-
-    Function exitProcess = {0};
-    exitProcess.return_type = _VOID;
-    exitProcess.name = string_from_cstr("ExitProcess");
-    da_append(&exitProcess.params, ((Param) {
-	  .type = U8,
-	  .name = string_from_cstr("exitCode"),
-	}));
-    da_append(&program.functions, exitProcess);
-
-    /*
-      u32 GetLastError();
-    */
-    Function getLastError = {0};
-    getLastError.return_type = U32;
-    getLastError.name = string_from_cstr("GetLastError");
-    da_append(&program.functions, getLastError);
-
-    /*
-      u32 GetFileSize(u64 *file, u32 *high);
-    */
-    Function getFileSize = {0};
-    getFileSize.return_type = U32;
-    getFileSize.name = string_from_cstr("GetFileSize");
-    da_append(&getFileSize.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("file")
-	}));
-    da_append(&getFileSize.params, ((Param) {
-	  .type = PTR(TYPE_U32),
-	  .name = string_from_cstr("high"),
-	}));
-    da_append(&program.functions, getFileSize);
-
-    /*
-      u64* GetStdHandle(u32 stdHandle);
-    */
-    Function getStdHandle = {0};
-    getStdHandle.return_type = PTR(TYPE_U64);
-    getStdHandle.name = string_from_cstr("GetStdHandle");
-    da_append(&getStdHandle.params, ((Param){
-	  .type = U32,
-	  .name = string_from_cstr("stdHandle")
-	}));
-    da_append(&program.functions, getStdHandle);
-
-    /*
-      u8 ReadFile(
-      u64* file,
-      u8* buffer,
-      u32 numberOfBytesToRead,
-      u32* numberOfBytesRead,
-      u64* overlapped);
-    */
-    Function readFile = {0};
-    readFile.return_type = U8;
-    readFile.name = string_from_cstr("ReadFile");
-    da_append(&readFile.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("file")
-	}));
-    da_append(&readFile.params, ((Param) {
-	  .type = PTR(TYPE_U8),
-	  .name = string_from_cstr("buffer")
-	}));  
-    da_append(&readFile.params, ((Param) {
-	  .type = U32,
-	  .name = string_from_cstr("numberOfBytesToRead")
-	}));
-    da_append(&readFile.params, ((Param) {
-	  .type = PTR(TYPE_U32),
-	  .name = string_from_cstr("numberOfBytesRead")
-	}));
-    da_append(&readFile.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("overlapped")
-	}));  
-    da_append(&program.functions, readFile);
-
-    /*
-      u8 WriteFile(
-      u64* file,
-      u8* buffer,
-      u32 numberOfBytesToWrite,
-      u32* numberOfBytesWritten,
-      u64* overlapped);
-    */
-    Function writeFile = {0};
-    writeFile.return_type = U8;
-    writeFile.name = string_from_cstr("WriteFile");
-    da_append(&writeFile.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("file")
-	}));
-    da_append(&writeFile.params, ((Param) {
-	  .type = PTR(TYPE_U8),
-	  .name = string_from_cstr("buffer")
-	}));  
-    da_append(&writeFile.params, ((Param) {
-	  .type = U32,
-	  .name = string_from_cstr("numberOfBytesToWrite")
-	}));
-    da_append(&writeFile.params, ((Param) {
-	  .type = PTR(TYPE_U32),
-	  .name = string_from_cstr("numberOfBytesWritten")
-	}));
-    da_append(&writeFile.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("overlapped")
-	}));  
-    da_append(&program.functions, writeFile);
-
-    /*
-      u8 CloseHandle(u64 *object);
-    */
-    Function closeHandle = {0};
-    closeHandle.return_type = U8;
-    closeHandle.name = string_from_cstr("CloseHandle");
-    da_append(&closeHandle.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("object"),
-	}));
-    da_append(&program.functions, closeHandle);
-
-    /*
-      u64 *GetProcessHeap();
-    */
-    Function getProcessHeap = {0};
-    getProcessHeap.return_type  = PTR(TYPE_U64);
-    getProcessHeap.name = string_from_cstr("GetProcessHeap");
-    da_append(&program.functions, getProcessHeap);
-
-    /*
-      u8* HeapAlloc(u64 *heap,
-      u32 flags,
-      u64 bytes);
-    */
-    Function heapAlloc = {0};
-    heapAlloc.return_type = PTR(TYPE_U8);
-    heapAlloc.name = string_from_cstr("HeapAlloc");
-    da_append(&heapAlloc.params, ((Param) {
-	  .type = PTR(TYPE_U64),
-	  .name = string_from_cstr("heap")
-	}));
-    da_append(&heapAlloc.params, ((Param) {
-	  .type = U32,
-	  .name = string_from_cstr("flags")
-	}));
-    da_append(&heapAlloc.params, ((Param) {
-	  .type = U64,
-	  .name = string_from_cstr("bytes")
-	}));
-    da_append(&program.functions, heapAlloc);
-    
-    struct_example_program(&program);
-    //dcba_program(&program);
-    //slurp_file_program(&program);
-    //buffered_slurp_file_program(&program);
   
-    string_builder sb = {0};
-    program_append(&program, &sb);
-    printf("%.*s", (int) sb.len, sb.data);
-
-    if(!io_write_file("main.asm", (u8 *) sb.data, sb.len)) {
-      return 1;
-    }
-
-
-    return 0;
-  }
+  return 0;
+}
