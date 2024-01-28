@@ -768,14 +768,18 @@ void instrs_optmize(Instrs *is) {
 }
 
 typedef enum{
-  TYPE_NONE = 0,
-  TYPE_STRUCT,
   TYPE_VOID,
-  TYPE_U64,
-  TYPE_U32,
+  TYPE_NONE = 0,
   TYPE_U8,
+  TYPE_U32,
+  TYPE_U64,
   TYPE_S64,
+  TYPE_STRUCT,
 }Type_Type;
+
+char *type_names[] = {
+  "u8", "u32", "u64", "s64"
+};
 
 #define NONE (Type) { TYPE_NONE, 0, 0 }
 #define _VOID (Type) { TYPE_VOID, 0, 0 }
@@ -796,6 +800,19 @@ typedef struct{
   u32 struct_index;
   // WHEN type == TYPE_STRUCT THEN struct_index  => index into 'Structure* structs'
 }Type;
+
+bool type_from(string s, Type *out) {
+  
+  for(u64 i=0;i<sizeof(type_names)/sizeof(type_names[0]);i++) {
+    u64 len = strlen(type_names[i]);
+    if(s.len == len && memcmp(s.data, type_names[i], len) == 0) {
+      *out = (Type) { .type = (i + 1), .ptr_degree = 0, .struct_index = 0};
+      return true;
+    }
+  }
+
+  return false;
+}
 
 Type type_deref(Type type) {
   return (Type) { type.type, type.ptr_degree - 1 };
@@ -3612,7 +3629,6 @@ void appendFunctionMain(Program *p) {
   //Stmtss *sss = &p->stmtss;
   Stmts *ss = &f.stmts;
 
-
   // s : string;
   stmts_append_declaration_struct(ss,
 				  string_from_cstr("s"),
@@ -3669,7 +3685,7 @@ void appendStructureString(Program *p) {
   da_append(&p->structures, structure);
 }
 
-int main() {
+int main2() {
 
   Program program = {0};
   appendFunctionsWinApi(&program);
@@ -3693,6 +3709,310 @@ int main() {
   program_append(&program, &sb, false);
   printf("%.*s", (int) sb.len, sb.data);
 
+  if(!io_write_file("foo.asm", (u8 *) sb.data, sb.len)) {
+    return 1;
+  }
+  
+  return 0;
+}
+
+typedef enum{
+  TOKEN_TYPE_NONE,
+  TOKEN_TYPE_EOF = 0,
+
+  TOKEN_TYPE_PARENTH_OPEN, // (
+  TOKEN_TYPE_PARENTH_CLOSE, // )
+  TOKEN_TYPE_SEMICOLON, // ;
+  TOKEN_TYPE_COLON, // :
+  TOKEN_TYPE_CURLY_PARENTH_OPEN, // {
+  TOKEN_TYPE_CURLY_PARENTH_CLOSE, // }
+  TOKEN_TYPE_COMMA, // ,
+  
+  TOKEN_TYPE_FOREIGN, // #foreign
+  TOKEN_TYPE_DOUBLE_COLON, // ::
+  
+  TOKEN_TYPE_NUMERIC,
+  TOKEN_TYPE_ALPHANUMERIC,  
+}Token_Type;
+
+char token_symbols[] = {
+  '(', ')', ';', ':', '{', '}', ','
+};
+
+char *token_names[] = {
+  "#foreign", "::",
+};
+
+typedef struct{
+  Token_Type type;
+  string content;
+}Token;
+
+#define token_fmt "{ content :: '" str_fmt"', type :: %d }"
+#define token_arg(t) str_arg((t).content), (t).type
+
+typedef struct{
+  string s;
+  u64 pos;
+}Lexer;
+
+Lexer lexer_from(string s) {
+  Lexer l;
+  l.s = s;
+  l.pos = 0;
+  return l;
+}
+
+void lexer_skip_whitespace(Lexer *l) {
+  for(;l->pos<l->s.len && isspace(l->s.data[l->pos]);l->pos++) ;
+}
+
+Token lexer_next_alphanumeric(Lexer *l) {
+  const char *data = l->s.data + l->pos;
+  u64 pos = l->pos;
+  for(;l->pos < l->s.len && (isalpha(l->s.data[l->pos]) || isdigit(l->s.data[l->pos]));l->pos++);
+  string content = string_from(data, l->pos - pos);  
+  return (Token) { .type = TOKEN_TYPE_ALPHANUMERIC, .content = content };
+}
+
+Token lexer_next_numeric(Lexer *l) {
+  const char *data = l->s.data + l->pos;
+  u64 pos = l->pos;
+  for(;l->pos < l->s.len && isdigit(l->s.data[l->pos]);l->pos++);
+  string content = string_from(data, l->pos - pos);  
+  return (Token) { .type = TOKEN_TYPE_NUMERIC, .content = content };  
+}
+
+Token lexer_next(Lexer *l) {
+  
+  lexer_skip_whitespace(l);
+  if(l->pos >= l->s.len) return (Token) { .type = TOKEN_TYPE_EOF, .content = string_from_cstr("EOF") };
+
+  for(u64 i=0;i<sizeof(token_names)/sizeof(token_names[0]);i++) {
+    u64 len = strlen(token_names[i]);
+    if((l->s.len - l->pos >= len) && memcmp(l->s.data + l->pos, token_names[i], len) == 0) {
+      string content = string_from(l->s.data + l->pos, len);
+      l->pos += len;
+      return (Token) {
+	.type = (i + 1 + sizeof(token_symbols)/sizeof(token_symbols[0]) ),
+	.content = content
+      };
+    }
+  }
+
+  for(u64 i=0;i<sizeof(token_symbols)/sizeof(token_symbols[0]);i++) {
+    if(token_symbols[i] == l->s.data[l->pos]) {
+      string content = string_from(l->s.data + l->pos, 1);
+      l->pos++;
+      return (Token) {
+	.type = (i + 1),
+	.content = content,
+      };
+    }
+  }
+
+  if(isalpha(l->s.data[l->pos])) {
+    return lexer_next_alphanumeric(l);
+  } else if(isdigit(l->s.data[l->pos])) {
+    return lexer_next_numeric(l);
+  } else {
+    return (Token) { .type = TOKEN_TYPE_EOF, .content = string_from_cstr("EOF") };  
+  }
+    
+}
+
+Token lexer_peek(Lexer *l, u64 n) {
+  u64 pos = l->pos;
+  Token token = {0};
+  for(u64 i=0;i<n;i++) {
+    token = lexer_next(l);
+    if(token.type == TOKEN_TYPE_EOF) break;
+  }
+  l->pos = pos;
+  return token;
+}
+
+typedef struct{
+  Lexer lexer;  
+}Parser;
+
+Parser parser_from(string s) {
+  Parser p;
+  p.lexer = lexer_from(s);
+  return p;
+}
+
+bool parser_parse_function(Parser *p, Program *program) {
+  Function f = {0};
+  Exprs *es = &program->exprs;  
+
+  Token token = lexer_peek(&p->lexer, 1);
+  if(token.type == TOKEN_TYPE_EOF) return false;
+
+  if(token.type == TOKEN_TYPE_FOREIGN) {
+    lexer_next(&p->lexer);
+    f.external = true;
+    
+    token = lexer_next(&p->lexer);
+    if(token.type != TOKEN_TYPE_ALPHANUMERIC) {
+      printf("Expected function name got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+    f.name = token.content;
+
+    token = lexer_next(&p->lexer);
+    if(token.type != TOKEN_TYPE_PARENTH_OPEN) {
+      printf("Expected '(' got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+
+    token = lexer_next(&p->lexer);
+    while(token.type != TOKEN_TYPE_EOF && 
+	  token.type != TOKEN_TYPE_PARENTH_CLOSE) {
+      Param param;
+
+      if(token.type != TOKEN_TYPE_ALPHANUMERIC) {
+	printf("Expected param name got "token_fmt"\n", token_arg(token));
+	return false;
+      }      
+      param.name = token.content;
+
+      token = lexer_next(&p->lexer);
+      if(token.type != TOKEN_TYPE_COLON) {
+	printf("Expected ':' got "token_fmt"\n", token_arg(token));
+	return false;
+      }
+
+      token = lexer_next(&p->lexer);
+      if(token.type != TOKEN_TYPE_ALPHANUMERIC) {
+	printf("Expected type got "token_fmt"\n", token_arg(token));
+	return false;
+      }
+      if(!type_from(token.content, &param.type)) {
+	return false;
+      }
+
+      da_append(&f.params, param);
+
+      token = lexer_next(&p->lexer);
+      if(token.type != TOKEN_TYPE_COMMA) {
+	break;
+      }
+    }
+
+    if(token.type != TOKEN_TYPE_PARENTH_CLOSE) {
+      printf("Expected ')' got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+    f.return_type = _VOID;
+
+    token = lexer_next(&p->lexer);
+    if(token.type != TOKEN_TYPE_SEMICOLON) {
+      printf("Expected ';' got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+
+    da_append(&program->functions, f);
+
+    return true;
+  } else {
+    lexer_next(&p->lexer);
+    f.external = false;
+
+    if(token.type != TOKEN_TYPE_ALPHANUMERIC) {
+      printf("Expected function name got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+    f.name = token.content;
+
+    token = lexer_next(&p->lexer);
+    if(token.type != TOKEN_TYPE_DOUBLE_COLON) {
+      printf("Expected '::' got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+
+    token = lexer_next(&p->lexer);
+    if(token.type != TOKEN_TYPE_CURLY_PARENTH_OPEN) {
+      printf("Expected '{' got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+
+    Stmts *ss = &f.stmts;
+
+    token = lexer_next(&p->lexer);
+    while(token.type != TOKEN_TYPE_EOF && 
+	  token.type != TOKEN_TYPE_CURLY_PARENTH_CLOSE) {
+      
+      if(token.type == TOKEN_TYPE_ALPHANUMERIC) {
+        string name = token.content;
+	
+	token = lexer_next(&p->lexer);	
+	if(token.type == TOKEN_TYPE_PARENTH_OPEN) { // functionName(arg1);
+
+	  token = lexer_next(&p->lexer);
+	  Expr *e;
+	  if(token.type == TOKEN_TYPE_NUMERIC) {
+	    s64 n;
+	    assert(string_parse_s64(token.content, &n));
+	    e = exprs_append_value(es, n);
+	  } else {
+	    panic("todo");
+	  }
+
+	  stmts_append_funccall(ss,
+				name,
+				e);
+
+	  token = lexer_next(&p->lexer);
+	  if(token.type != TOKEN_TYPE_PARENTH_CLOSE) {
+	    printf("Expected ')' got "token_fmt"\n", token_arg(token));
+	    return false;
+	  }
+	  
+	} else {
+	  panic("todo");
+	}
+	
+      } else {
+	panic("todo");
+      }
+
+      token = lexer_next(&p->lexer);
+      if(token.type != TOKEN_TYPE_SEMICOLON) {
+	printf("Expected ';' got "token_fmt"\n", token_arg(token));
+	return false;
+      }
+      token = lexer_next(&p->lexer);
+    }
+
+    if(token.type != TOKEN_TYPE_CURLY_PARENTH_CLOSE) {
+      printf("Expected '}' got "token_fmt"\n", token_arg(token));
+      return false;
+    }
+
+    da_append(&program->functions, f);
+
+    return false;
+  }
+    
+}
+
+int main() {
+
+  const char *filepath = "main.fe";
+  
+  string content;
+  if(!io_slurp_file(filepath, (unsigned char **) &content.data, &content.len)) {
+    return 1;
+  }
+  
+  Parser parser = parser_from(content);  
+  Program program = {0};
+  while(parser_parse_function(&parser, &program)) ;
+
+  string_builder sb = {0};  
+  program_append(&program, &sb, false);
+  printf("%.*s\n", (int) sb.len, sb.data);
   if(!io_write_file("foo.asm", (u8 *) sb.data, sb.len)) {
     return 1;
   }

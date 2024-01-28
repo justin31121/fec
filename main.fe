@@ -1,6 +1,5 @@
-#foreign ExitProcess(x : u8);
+#foreign ExitProcess(x : s64);
 
 main :: {
-
-     ExitProcess(0);
+    ExitProcess(69);
 }
